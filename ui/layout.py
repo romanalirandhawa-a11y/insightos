@@ -1,6 +1,7 @@
 """Layout and navigation components for InsightOS.
 
-Phase 1 stub: sidebar navigation with four pages. No analytics yet.
+Sidebar navigation with four pages. Tracks the current page in
+st.session_state. No analytics implemented yet.
 """
 
 import streamlit as st
@@ -27,6 +28,6 @@ def render_sidebar() -> str:
         st.session_state.current_page = selection
 
         st.divider()
-        st.caption("InsightOS v1.0 (Phase 1)")
+        st.caption("InsightOS v1.0 (Phase 2)")
 
     return st.session_state.current_page
