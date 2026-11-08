@@ -1,14 +1,17 @@
 """InsightOS - AI Business Intelligence Platform.
 
-Phase 2: data upload. Adds a file uploader, sample-data loading, and
-stores the loaded DataFrame in st.session_state["df"]. Other pages
-show a warning until data is uploaded.
+Phase 3: data cleaning. After data is loaded and validated, clean_data()
+runs automatically. The original df stays in st.session_state["df"] and
+the cleaned df + report are stored in st.session_state["df_clean"] and
+st.session_state["clean_report"]. Other pages warn until data is loaded.
 
-Cleaning and analytics are intentionally not implemented yet.
+KPIs and charts are intentionally not implemented yet.
 """
 
+import pandas as pd
 import streamlit as st
 
+from core.cleaner import clean_data
 from core.loader import load_data, load_sample_data, validate_columns
 from ui.layout import render_sidebar
 
@@ -41,8 +44,19 @@ def render_header() -> None:
     st.divider()
 
 
+def _run_cleaning(df: pd.DataFrame) -> None:
+    """Run clean_data on a DataFrame and store results in session state.
+
+    Args:
+        df: Raw validated DataFrame.
+    """
+    cleaned_df, report = clean_data(df)
+    st.session_state["df_clean"] = cleaned_df
+    st.session_state["clean_report"] = report
+
+
 def render_upload_page() -> None:
-    """Render the Upload Data page: file uploader + sample data button."""
+    """Render the Upload Data page: uploader, cleaning, and report."""
     st.subheader("Upload Data")
     st.write(
         "Upload your sales data (CSV or Excel) to get started. "
@@ -52,13 +66,12 @@ def render_upload_page() -> None:
     uploaded_file = st.file_uploader("Choose a file", type=["csv", "xlsx"])
     use_sample = st.button("Use sample data")
 
-    df = None
-
     if use_sample:
         try:
             df = load_sample_data()
             st.session_state["df"] = df
             st.success("Sample data loaded successfully.")
+            _run_cleaning(df)
         except (FileNotFoundError, ValueError) as exc:
             st.error(str(exc))
 
@@ -67,10 +80,11 @@ def render_upload_page() -> None:
             df = load_data(uploaded_file)
             st.session_state["df"] = df
             st.success(f"File '{uploaded_file.name}' loaded successfully.")
+            _run_cleaning(df)
         except ValueError as exc:
             st.error(str(exc))
 
-    # Display the loaded dataframe if available in session state.
+    # Display the loaded data and cleaning report if available.
     if "df" in st.session_state:
         df = st.session_state["df"]
         missing = validate_columns(df)
@@ -83,8 +97,40 @@ def render_upload_page() -> None:
         else:
             rows, cols = df.shape
             st.info(f"Loaded {rows} rows and {cols} columns.")
+
             st.subheader("Preview (first 10 rows)")
             st.dataframe(df.head(10), use_container_width=True)
+
+            # Data Cleaning Report section.
+            if "clean_report" in st.session_state:
+                report = st.session_state["clean_report"]
+                st.subheader("Data Cleaning Report")
+
+                m1, m2, m3, m4 = st.columns(4)
+                with m1:
+                    st.metric("Rows before", report["rows_before"])
+                with m2:
+                    st.metric("Rows after", report["rows_after"])
+                with m3:
+                    st.metric("Duplicates removed", report["duplicates_removed"])
+                with m4:
+                    st.metric("Invalid dates removed", report["invalid_dates_removed"])
+
+                m5, m6, m7, m8 = st.columns(4)
+                with m5:
+                    st.metric("Invalid numbers removed", report["invalid_numbers_removed"])
+                with m6:
+                    st.metric("Missing values filled", report["missing_values_filled"])
+                with m7:
+                    st.metric("Negative rows removed", report["negative_removed"])
+                with m8:
+                    st.metric("Final rows", len(st.session_state["df_clean"]))
+
+                with st.expander("View cleaned data preview"):
+                    st.dataframe(
+                        st.session_state["df_clean"].head(10),
+                        use_container_width=True,
+                    )
 
 
 def render_guard_page(page_name: str) -> None:
@@ -98,7 +144,8 @@ def render_guard_page(page_name: str) -> None:
         st.warning("Please upload data first.")
     else:
         st.info(
-            "Data is loaded. Analytics for this page are coming in a later phase."
+            "Data is loaded and cleaned. Analytics for this page are "
+            "coming in a later phase."
         )
 
 
