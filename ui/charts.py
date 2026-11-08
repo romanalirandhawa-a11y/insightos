@@ -171,3 +171,48 @@ def category_donut_chart(category_df) -> go.Figure:
         showlegend=False,
     )
     return _apply_dark_layout(fig)
+
+
+def scenario_bar_chart(current: dict, scenario: dict) -> go.Figure:
+    """Grouped bar chart comparing Current vs Scenario.
+
+    Args:
+        current: dict with Revenue, Cost, Profit keys (from simulate_scenario).
+        scenario: dict with Revenue, Cost, Profit keys (from simulate_scenario).
+
+    Returns:
+        A plotly Figure.
+    """
+    metrics = ["Revenue", "Cost", "Profit"]
+    current_vals = [current["Revenue"], current["Cost"], current["Profit"]]
+    scenario_vals = [scenario["Revenue"], scenario["Cost"], scenario["Profit"]]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=metrics,
+            y=current_vals,
+            name="Current",
+            marker_color=PRIMARY_COLOR,
+            hovertemplate="Current %{x}: $%{y:,.2f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=metrics,
+            y=scenario_vals,
+            name="Scenario",
+            marker_color="#22C55E",
+            hovertemplate="Scenario %{x}: $%{y:,.2f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Current vs Scenario",
+        xaxis_title="Metric",
+        yaxis_title="Amount ($)",
+        barmode="group",
+        yaxis=dict(tickformat="$,.0f"),
+    )
+    return _apply_dark_layout(fig)

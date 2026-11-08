@@ -345,3 +345,83 @@ def driver_analysis(df: pd.DataFrame, metric: str = "Profit") -> dict:
         "top_negative_regions": top_negative_regions,
     }
 
+
+def simulate_scenario(
+    df: pd.DataFrame,
+    price_change_pct: float = 0,
+    volume_change_pct: float = 0,
+    cost_change_pct: float = 0,
+) -> dict:
+    """Simulate a what-if scenario on the cleaned DataFrame.
+
+    Applies percentage changes to price (Sales), volume (quantity-driven
+    revenue/cost scaling), and cost, then computes the resulting revenue,
+    cost, profit, and margin.
+
+    Formulas:
+        scenario_revenue = current_revenue * (1 + price%) * (1 + volume%)
+        scenario_cost    = current_cost    * (1 + volume%) * (1 + cost%)
+        scenario_profit  = scenario_revenue - scenario_cost
+
+    Args:
+        df: Cleaned sales DataFrame with Sales, Cost, and Profit columns.
+        price_change_pct: Price change in percent (e.g. 5 for +5%).
+        volume_change_pct: Volume change in percent (e.g. -10 for -10%).
+        cost_change_pct: Cost change in percent (e.g. 8 for +8%).
+
+    Returns:
+        dict with current and scenario values for revenue, cost, profit,
+        margin_pct, plus absolute and percent changes.
+
+    Raises:
+        ValueError: If any percent input is at or below -100.
+    """
+    for name, value in [
+        ("price_change_pct", price_change_pct),
+        ("volume_change_pct", volume_change_pct),
+        ("cost_change_pct", cost_change_pct),
+    ]:
+        if value <= -100:
+            raise ValueError(f"{name} must be greater than -100.")
+
+    current_revenue = float(df["Sales"].sum())
+    current_cost = float(df["Cost"].sum())
+    current_profit = current_revenue - current_cost
+    current_margin_pct = _safe_divide(current_profit, current_revenue) * 100
+
+    price_factor = 1 + price_change_pct / 100
+    volume_factor = 1 + volume_change_pct / 100
+    cost_factor = 1 + cost_change_pct / 100
+
+    scenario_revenue = current_revenue * price_factor * volume_factor
+    scenario_cost = current_cost * volume_factor * cost_factor
+    scenario_profit = scenario_revenue - scenario_cost
+    scenario_margin_pct = _safe_divide(scenario_profit, scenario_revenue) * 100
+
+    revenue_change = scenario_revenue - current_revenue
+    profit_change = scenario_profit - current_profit
+    margin_change_points = scenario_margin_pct - current_margin_pct
+
+    revenue_change_pct = _safe_divide(revenue_change, current_revenue) * 100
+    profit_change_pct = _safe_divide(profit_change, current_profit) * 100
+    margin_change_pct = _safe_divide(
+        margin_change_points, current_margin_pct
+    ) * 100
+
+    return {
+        "current_revenue": round(current_revenue, 2),
+        "current_cost": round(current_cost, 2),
+        "current_profit": round(current_profit, 2),
+        "current_margin_pct": round(current_margin_pct, 1),
+        "scenario_revenue": round(scenario_revenue, 2),
+        "scenario_cost": round(scenario_cost, 2),
+        "scenario_profit": round(scenario_profit, 2),
+        "scenario_margin_pct": round(scenario_margin_pct, 1),
+        "revenue_change": round(revenue_change, 2),
+        "profit_change": round(profit_change, 2),
+        "margin_change_points": round(margin_change_points, 1),
+        "revenue_change_pct": round(revenue_change_pct, 1),
+        "profit_change_pct": round(profit_change_pct, 1),
+        "margin_change_pct": round(margin_change_pct, 1),
+    }
+

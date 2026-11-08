@@ -1,13 +1,13 @@
 """InsightOS - AI Business Intelligence Platform.
 
-Phase 6: AI Analyst. After data is loaded and cleaned, the AI Analyst
-page answers business questions using facts from pandas KPI results
-(the AI never calculates numbers). The Dashboard page shows KPI cards,
-charts, and summary tables using filtered data. The original df stays
-in st.session_state["df"] and the cleaned df + report are stored in
-st.session_state["df_clean"] and st.session_state["clean_report"].
-
-What-If is intentionally not implemented yet.
+Phase 7: What-If Simulator. After data is loaded and cleaned, the
+What-If Simulator page models price, volume, and cost changes using
+pandas only (no AI). The AI Analyst page answers business questions
+using facts from pandas KPI results (the AI never calculates numbers).
+The Dashboard page shows KPI cards, charts, and summary tables using
+filtered data. The original df stays in st.session_state["df"] and
+the cleaned df + report are stored in st.session_state["df_clean"]
+and st.session_state["clean_report"].
 """
 
 import pandas as pd
@@ -21,6 +21,7 @@ from core.kpi import (
     category_performance,
     monthly_trend,
     regional_performance,
+    simulate_scenario,
     top_customers,
     top_products,
     worst_products,
@@ -30,6 +31,7 @@ from ui.charts import (
     category_donut_chart,
     regional_chart,
     revenue_profit_trend_chart,
+    scenario_bar_chart,
     top_products_chart,
 )
 from ui.layout import render_sidebar
@@ -369,6 +371,223 @@ def render_ai_analyst_page() -> None:
         st.session_state["ai_messages"].append({"role": "assistant", "content": full_answer})
 
 
+def _set_wi_scenario(price: int, volume: int, cost: int) -> None:
+    """Callback for What-If quick scenario buttons.
+
+    Sets slider session-state values before sliders render on the next
+    Streamlit run. This is the correct pattern for button-driven
+    widget updates in Streamlit.
+
+    Args:
+        price: Price change percent.
+        volume: Sales volume change percent.
+        cost: Cost change percent.
+    """
+    st.session_state["wi_price"] = price
+    st.session_state["wi_volume"] = volume
+    st.session_state["wi_cost"] = cost
+
+
+def render_what_if_page() -> None:
+    """Render the What-If Simulator page.
+
+    Lets the user simulate price, volume, and cost changes and see the
+    impact on Revenue, Cost, Profit, and Margin. Uses pandas only
+    (core.kpi.simulate_scenario) - no AI involved.
+    """
+    st.subheader("What-If Simulator")
+
+    if "df_clean" not in st.session_state:
+        st.warning("Please upload data first.")
+        return
+
+    df_full = st.session_state["df_clean"]
+
+    # Initialize slider values in session state (only if not set yet).
+    if "wi_price" not in st.session_state:
+        st.session_state["wi_price"] = 0
+    if "wi_volume" not in st.session_state:
+        st.session_state["wi_volume"] = 0
+    if "wi_cost" not in st.session_state:
+        st.session_state["wi_cost"] = 0
+
+    # Callback functions set session state BEFORE sliders render on
+    # the next run. This is the correct Streamlit pattern for button-
+    # driven widget updates.
+    def _set_scenario(price: int, volume: int, cost: int) -> None:
+        _set_wi_scenario(price, volume, cost)
+
+    # Quick scenario buttons with on_click callbacks.
+    st.write("### Quick Scenarios")
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+    with col_btn1:
+        st.button(
+            "Price +5%",
+            key="wi_btn_price_up",
+            on_click=_set_scenario,
+            args=(5, 0, 0),
+        )
+    with col_btn2:
+        st.button(
+            "Sales -10%",
+            key="wi_btn_sales_down",
+            on_click=_set_scenario,
+            args=(0, -10, 0),
+        )
+    with col_btn3:
+        st.button(
+            "Cost +8%",
+            key="wi_btn_cost_up",
+            on_click=_set_scenario,
+            args=(0, 0, 8),
+        )
+    with col_btn4:
+        st.button(
+            "Reset",
+            key="wi_btn_reset",
+            on_click=_set_scenario,
+            args=(0, 0, 0),
+        )
+
+    st.divider()
+
+    # Sliders controlled by session_state keys. Do NOT pass a default
+    # value to a session_state-controlled slider (Streamlit warns).
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        price_change = st.slider(
+            "Price change (%)",
+            min_value=-30,
+            max_value=30,
+            step=1,
+            key="wi_price",
+        )
+    with col_s2:
+        volume_change = st.slider(
+            "Sales volume change (%)",
+            min_value=-50,
+            max_value=50,
+            step=1,
+            key="wi_volume",
+        )
+    with col_s3:
+        cost_change = st.slider(
+            "Cost change (%)",
+            min_value=-30,
+            max_value=30,
+            step=1,
+            key="wi_cost",
+        )
+
+    # Region and category filters.
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        all_regions = sorted(df_full["Region"].unique().tolist())
+        selected_regions = st.multiselect(
+            "Region",
+            options=all_regions,
+            default=all_regions,
+            key="wi_region",
+        )
+    with col_f2:
+        all_categories = sorted(df_full["Category"].unique().tolist())
+        selected_categories = st.multiselect(
+            "Category",
+            options=all_categories,
+            default=all_categories,
+            key="wi_category",
+        )
+
+    # Apply filters to build simulation DataFrame.
+    sim_df = df_full.copy()
+    if selected_regions:
+        sim_df = sim_df[sim_df["Region"].isin(selected_regions)]
+    if selected_categories:
+        sim_df = sim_df[sim_df["Category"].isin(selected_categories)]
+
+    if sim_df.empty:
+        st.warning("No data matches the selected filters. Try adjusting them.")
+        return
+
+    # Run the simulation.
+    try:
+        result = simulate_scenario(
+            sim_df,
+            price_change_pct=price_change,
+            volume_change_pct=volume_change,
+            cost_change_pct=cost_change,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+
+    # Current vs Scenario KPI cards.
+    st.write("### Current vs Scenario")
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric(
+            "Revenue",
+            f"${result['scenario_revenue']:,.2f}",
+            delta=f"${result['revenue_change']:,.2f}",
+        )
+    with m2:
+        st.metric(
+            "Profit",
+            f"${result['scenario_profit']:,.2f}",
+            delta=f"${result['profit_change']:,.2f}",
+        )
+    with m3:
+        st.metric(
+            "Margin",
+            f"{result['scenario_margin_pct']:.1f}%",
+            delta=f"{result['margin_change_points']:+.1f} pts",
+        )
+
+    # Grouped bar chart.
+    st.write("### Revenue, Cost, Profit Comparison")
+    current = {
+        "Revenue": result["current_revenue"],
+        "Cost": result["current_cost"],
+        "Profit": result["current_profit"],
+    }
+    scenario_vals = {
+        "Revenue": result["scenario_revenue"],
+        "Cost": result["scenario_cost"],
+        "Profit": result["scenario_profit"],
+    }
+    fig = scenario_bar_chart(current, scenario_vals)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Assumptions note.
+    st.info(
+        "Simple estimate. Assumes the volume slider already includes any "
+        "customer reaction to price changes. Cost scales with volume."
+    )
+
+    # Details expander.
+    with st.expander("View scenario details"):
+        st.write(f"**Current revenue:** ${result['current_revenue']:,.2f}")
+        st.write(f"**Current cost:** ${result['current_cost']:,.2f}")
+        st.write(f"**Current profit:** ${result['current_profit']:,.2f}")
+        st.write(f"**Current margin:** {result['current_margin_pct']:.1f}%")
+        st.write(f"**Scenario revenue:** ${result['scenario_revenue']:,.2f}")
+        st.write(f"**Scenario cost:** ${result['scenario_cost']:,.2f}")
+        st.write(f"**Scenario profit:** ${result['scenario_profit']:,.2f}")
+        st.write(f"**Scenario margin:** {result['scenario_margin_pct']:.1f}%")
+        st.write(
+            f"**Revenue change:** ${result['revenue_change']:,.2f} "
+            f"({result['revenue_change_pct']:+.1f}%)"
+        )
+        st.write(
+            f"**Profit change:** ${result['profit_change']:,.2f} "
+            f"({result['profit_change_pct']:+.1f}%)"
+        )
+        st.write(
+            f"**Margin change:** {result['margin_change_points']:+.1f} pts "
+            f"({result['margin_change_pct']:+.1f}%)"
+        )
+
+
 def render_guard_page(page_name: str) -> None:
     """Render a 'please upload data first' warning for non-upload pages.
 
@@ -401,6 +620,8 @@ def main() -> None:
         render_dashboard_page()
     elif current_page == "AI Analyst":
         render_ai_analyst_page()
+    elif current_page == "What-If Simulator":
+        render_what_if_page()
     else:
         render_guard_page(current_page)
 

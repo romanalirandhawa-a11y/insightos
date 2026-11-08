@@ -14,6 +14,7 @@ from core.kpi import (
     driver_analysis,
     monthly_trend,
     regional_performance,
+    simulate_scenario,
     top_customers,
     top_products,
     worst_products,
@@ -867,4 +868,201 @@ def test_ask_analyst_stream_fallback_to_secondary():
             aa._get_client_and_model = orig_get_client_and_model
     finally:
         _restore_env(saved)
+
+
+# ---- simulate_scenario tests ----
+
+
+def _make_sim_df() -> pd.DataFrame:
+    """Small DataFrame where revenue=1000, cost=600, profit=400."""
+    data = {
+        "Date": ["2026-01-10", "2026-01-15", "2026-01-20"],
+        "Product": ["A", "B", "C"],
+        "Category": ["Elec", "Elec", "Cloth"],
+        "Region": ["North", "South", "East"],
+        "Sales": [400.0, 350.0, 250.0],
+        "Cost": [200.0, 250.0, 150.0],
+        "Quantity": [4, 7, 5],
+        "Customer": ["C1", "C2", "C3"],
+        "Profit": [200.0, 100.0, 100.0],
+        "Month": ["2026-01"] * 3,
+        "Year": [2026] * 3,
+    }
+    return pd.DataFrame(data)
+
+
+def test_simulate_scenario_no_change():
+    """All zeros: scenario equals current."""
+    df = _make_sim_df()
+    result = simulate_scenario(df)
+
+    assert result["current_revenue"] == 1000.0
+    assert result["current_cost"] == 600.0
+    assert result["current_profit"] == 400.0
+    assert result["current_margin_pct"] == 40.0
+
+    assert result["scenario_revenue"] == 1000.0
+    assert result["scenario_cost"] == 600.0
+    assert result["scenario_profit"] == 400.0
+    assert result["scenario_margin_pct"] == 40.0
+
+    assert result["revenue_change"] == 0.0
+    assert result["profit_change"] == 0.0
+    assert result["margin_change_points"] == 0.0
+
+
+def test_simulate_scenario_price_increase():
+    """Price +10%: revenue 1000 -> 1100, cost unchanged, profit 400 -> 500."""
+    df = _make_sim_df()
+    result = simulate_scenario(df, price_change_pct=10)
+
+    assert result["scenario_revenue"] == 1100.0
+    assert result["scenario_cost"] == 600.0
+    assert result["scenario_profit"] == 500.0
+    assert result["scenario_margin_pct"] == 45.5  # 500/1100*100
+
+    assert result["revenue_change"] == 100.0
+    assert result["profit_change"] == 100.0
+    assert result["revenue_change_pct"] == 10.0
+
+
+def test_simulate_scenario_volume_increase():
+    """Volume +20%: revenue 1000*1.2=1200, cost 600*1.2=720, profit 480."""
+    df = _make_sim_df()
+    result = simulate_scenario(df, volume_change_pct=20)
+
+    assert result["scenario_revenue"] == 1200.0
+    assert result["scenario_cost"] == 720.0
+    assert result["scenario_profit"] == 480.0
+    assert result["scenario_margin_pct"] == 40.0  # 480/1200*100
+
+    assert result["revenue_change"] == 200.0
+    assert result["profit_change"] == 80.0
+
+
+def test_simulate_scenario_cost_increase():
+    """Cost +8%: cost 600 -> 648, revenue unchanged, profit 400 -> 352."""
+    df = _make_sim_df()
+    result = simulate_scenario(df, cost_change_pct=8)
+
+    assert result["scenario_revenue"] == 1000.0
+    assert result["scenario_cost"] == 648.0
+    assert result["scenario_profit"] == 352.0
+
+    assert result["profit_change"] == -48.0
+
+
+def test_simulate_scenario_combined():
+    """Price +10% and volume +10%: revenue 1000*1.1*1.1=1210."""
+    df = _make_sim_df()
+    result = simulate_scenario(df, price_change_pct=10, volume_change_pct=10)
+
+    assert result["scenario_revenue"] == 1210.0
+
+
+def test_simulate_scenario_invalid_input():
+    """Values at or below -100 raise ValueError."""
+    df = _make_sim_df()
+
+    try:
+        simulate_scenario(df, price_change_pct=-100)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    try:
+        simulate_scenario(df, volume_change_pct=-101)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+    try:
+        simulate_scenario(df, cost_change_pct=-150)
+        assert False, "Expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_simulate_scenario_zero_current_revenue():
+    """Zero current revenue: margin pct changes are 0 (safe divide)."""
+    df = _make_sim_df()
+    df_empty = df.iloc[0:0]
+    result = simulate_scenario(df_empty, price_change_pct=10)
+
+    assert result["current_revenue"] == 0.0
+    assert result["current_margin_pct"] == 0.0
+    assert result["scenario_margin_pct"] == 0.0
+    assert result["margin_change_pct"] == 0.0
+
+
+# ---- What-If callback tests ----
+
+
+def test_set_wi_scenario_price_up():
+    saved_state = {}
+    import app as app_module
+
+    # Monkeypatch st.session_state with a fake dict.
+    import streamlit as st
+
+    original_session_state = st.session_state
+    st.session_state = saved_state
+    try:
+        app_module._set_wi_scenario(5, 0, 0)
+        assert saved_state["wi_price"] == 5
+        assert saved_state["wi_volume"] == 0
+        assert saved_state["wi_cost"] == 0
+    finally:
+        st.session_state = original_session_state
+
+
+def test_set_wi_scenario_sales_down():
+    saved_state = {}
+    import app as app_module
+
+    import streamlit as st
+
+    original_session_state = st.session_state
+    st.session_state = saved_state
+    try:
+        app_module._set_wi_scenario(0, -10, 0)
+        assert saved_state["wi_price"] == 0
+        assert saved_state["wi_volume"] == -10
+        assert saved_state["wi_cost"] == 0
+    finally:
+        st.session_state = original_session_state
+
+
+def test_set_wi_scenario_cost_up():
+    saved_state = {}
+    import app as app_module
+
+    import streamlit as st
+
+    original_session_state = st.session_state
+    st.session_state = saved_state
+    try:
+        app_module._set_wi_scenario(0, 0, 8)
+        assert saved_state["wi_price"] == 0
+        assert saved_state["wi_volume"] == 0
+        assert saved_state["wi_cost"] == 8
+    finally:
+        st.session_state = original_session_state
+
+
+def test_set_wi_scenario_reset():
+    saved_state = {"wi_price": 25, "wi_volume": -30, "wi_cost": 15}
+    import app as app_module
+
+    import streamlit as st
+
+    original_session_state = st.session_state
+    st.session_state = saved_state
+    try:
+        app_module._set_wi_scenario(0, 0, 0)
+        assert saved_state["wi_price"] == 0
+        assert saved_state["wi_volume"] == 0
+        assert saved_state["wi_cost"] == 0
+    finally:
+        st.session_state = original_session_state
 
