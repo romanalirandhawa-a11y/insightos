@@ -1,17 +1,27 @@
 """InsightOS - AI Business Intelligence Platform.
 
-Phase 3: data cleaning. After data is loaded and validated, clean_data()
-runs automatically. The original df stays in st.session_state["df"] and
-the cleaned df + report are stored in st.session_state["df_clean"] and
-st.session_state["clean_report"]. Other pages warn until data is loaded.
+Phase 4: KPI engine. After data is loaded and cleaned, the Dashboard
+page shows KPI cards and summary tables. The original df stays in
+st.session_state["df"] and the cleaned df + report are stored in
+st.session_state["df_clean"] and st.session_state["clean_report"].
 
-KPIs and charts are intentionally not implemented yet.
+Charts and AI are intentionally not implemented yet.
 """
 
 import pandas as pd
 import streamlit as st
 
 from core.cleaner import clean_data
+from core.kpi import (
+    calculate_core_kpis,
+    calculate_growth,
+    category_performance,
+    monthly_trend,
+    regional_performance,
+    top_customers,
+    top_products,
+    worst_products,
+)
 from core.loader import load_data, load_sample_data, validate_columns
 from ui.layout import render_sidebar
 
@@ -133,6 +143,65 @@ def render_upload_page() -> None:
                     )
 
 
+def render_dashboard_page() -> None:
+    """Render the Dashboard page with KPI cards and data tables."""
+    st.subheader("Dashboard")
+
+    if "df_clean" not in st.session_state:
+        st.warning("Please upload data first.")
+        return
+
+    df = st.session_state["df_clean"]
+
+    # Calculate KPIs.
+    kpis = calculate_core_kpis(df)
+    growth = calculate_growth(df)
+
+    # Row 1: 4 core KPI cards (Revenue, Profit, Orders, Growth %).
+    st.write("### Key Performance Indicators")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("Revenue", f"${kpis['total_revenue']:,.2f}")
+    with m2:
+        st.metric("Profit", f"${kpis['total_profit']:,.2f}")
+    with m3:
+        st.metric("Orders", kpis["total_orders"])
+    with m4:
+        delta = growth["revenue_growth_pct"]
+        delta_str = f"{delta:+.1f}%" if delta is not None else None
+        st.metric("Growth %", delta_str, delta=delta_str)
+
+    # Row 2: Profit Margin, Avg Order Value, Customers.
+    m5, m6, m7 = st.columns(3)
+    with m5:
+        st.metric("Profit Margin", f"{kpis['profit_margin_pct']:.1f}%")
+    with m6:
+        st.metric("Avg Order Value", f"${kpis['avg_order_value']:,.2f}")
+    with m7:
+        st.metric("Customers", kpis["total_customers"])
+
+    st.divider()
+
+    # Tables section.
+    st.write("### Top Products")
+    st.dataframe(top_products(df), use_container_width=True)
+
+    st.write("### Worst Products")
+    st.dataframe(worst_products(df), use_container_width=True)
+
+    st.write("### Regional Performance")
+    st.dataframe(regional_performance(df), use_container_width=True)
+
+    st.write("### Category Performance")
+    st.dataframe(category_performance(df), use_container_width=True)
+
+    st.write("### Top Customers")
+    st.dataframe(top_customers(df), use_container_width=True)
+
+    st.write("### Monthly Trend")
+    st.dataframe(monthly_trend(df), use_container_width=True)
+
+
 def render_guard_page(page_name: str) -> None:
     """Render a 'please upload data first' warning for non-upload pages.
 
@@ -161,6 +230,8 @@ def main() -> None:
 
     if current_page == "Upload Data":
         render_upload_page()
+    elif current_page == "Dashboard":
+        render_dashboard_page()
     else:
         render_guard_page(current_page)
 
