@@ -235,3 +235,113 @@ def top_customers(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     return grouped.sort_values("Revenue", ascending=False).head(n)[
         ["Customer", "Revenue", "Profit", "Orders"]
     ]
+
+
+def driver_analysis(df: pd.DataFrame, metric: str = "Profit") -> dict:
+    """Compare latest month vs previous month and find top contributors.
+
+    For the given metric (Sales or Profit by default), computes the total
+    change between the latest and previous month, then ranks Products and
+    Regions by their individual change in that metric. The change for each
+    Product/Region uses ALL data for that entity in each month (a missing
+    month is treated as 0), so new or discontinued entities are counted
+    correctly instead of being silently dropped.
+
+    Args:
+        df: Cleaned sales DataFrame with Month, Product, Region, and the
+            metric column.
+        metric: Column name to analyze ("Sales" or "Profit").
+
+    Returns:
+        dict with latest_month, previous_month, total_change_abs,
+        total_change_pct, top_positive_products, top_negative_products,
+        top_positive_regions, top_negative_regions. All values are None
+        if fewer than 2 months exist.
+    """
+    monthly = (
+        df.groupby("Month")[metric]
+        .sum()
+        .reset_index()
+        .sort_values("Month")
+    )
+
+    if len(monthly) < 2:
+        return {
+            "latest_month": None,
+            "previous_month": None,
+            "total_change_abs": None,
+            "total_change_pct": None,
+            "top_positive_products": None,
+            "top_negative_products": None,
+            "top_positive_regions": None,
+            "top_negative_regions": None,
+        }
+
+    latest_month = str(monthly.iloc[-1]["Month"])
+    previous_month = str(monthly.iloc[-2]["Month"])
+
+    latest_total = float(monthly.iloc[-1][metric])
+    previous_total = float(monthly.iloc[-2][metric])
+
+    total_change_abs = latest_total - previous_total
+    total_change_pct = _safe_divide(total_change_abs, previous_total) * 100
+
+    # ---- Product-level changes (all products, missing months = 0) ----
+    product_monthly = (
+        df.groupby(["Product", "Month"])[metric]
+        .sum()
+        .reset_index()
+        .pivot(index="Product", columns="Month", values=metric)
+        .fillna(0)
+    )
+    product_changes = (
+        product_monthly.assign(
+            change=product_monthly[latest_month] - product_monthly[previous_month]
+        )
+        .reset_index()[["Product", "change"]]
+        .sort_values("change", ascending=False)
+    )
+    top_positive_products = [
+        (row["Product"], round(float(row["change"]), 2))
+        for _, row in product_changes.head(3).iterrows()
+    ]
+    top_negative_products = [
+        (row["Product"], round(float(row["change"]), 2))
+        for _, row in product_changes.tail(3).iloc[::-1].iterrows()
+    ]
+
+    # ---- Region-level changes (all regions, missing months = 0) ----
+    region_monthly = (
+        df.groupby(["Region", "Month"])[metric]
+        .sum()
+        .reset_index()
+        .pivot(index="Region", columns="Month", values=metric)
+        .fillna(0)
+    )
+    region_changes = (
+        region_monthly.assign(
+            change=region_monthly[latest_month] - region_monthly[previous_month]
+        )
+        .reset_index()[["Region", "change"]]
+        .sort_values("change", ascending=False)
+    )
+    top_positive_regions = [
+        (row["Region"], round(float(row["change"]), 2))
+        for _, row in region_changes.head(3).iterrows()
+    ]
+    top_negative_regions = [
+        (row["Region"], round(float(row["change"]), 2))
+        for _, row in region_changes.tail(3).iloc[::-1].iterrows()
+    ]
+
+    return {
+        "latest_month": latest_month,
+        "previous_month": previous_month,
+        "total_change_abs": round(total_change_abs, 2),
+        "total_change_pct": round(total_change_pct, 1),
+        "top_positive_products": top_positive_products,
+        "top_negative_products": top_negative_products,
+        "top_positive_regions": top_positive_regions,
+        "top_negative_regions": top_negative_regions,
+    }
+

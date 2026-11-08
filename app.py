@@ -1,17 +1,19 @@
 """InsightOS - AI Business Intelligence Platform.
 
-Phase 5: interactive dashboard with filters and Plotly charts. After
-data is loaded and cleaned, the Dashboard page shows KPI cards, charts,
-and summary tables using filtered data. The original df stays in
-st.session_state["df"] and the cleaned df + report are stored in
+Phase 6: AI Analyst. After data is loaded and cleaned, the AI Analyst
+page answers business questions using facts from pandas KPI results
+(the AI never calculates numbers). The Dashboard page shows KPI cards,
+charts, and summary tables using filtered data. The original df stays
+in st.session_state["df"] and the cleaned df + report are stored in
 st.session_state["df_clean"] and st.session_state["clean_report"].
 
-AI and What-If are intentionally not implemented yet.
+What-If is intentionally not implemented yet.
 """
 
 import pandas as pd
 import streamlit as st
 
+from core.ai_analyst import ask_analyst_stream, build_context, get_provider_info
 from core.cleaner import clean_data
 from core.kpi import (
     calculate_core_kpis,
@@ -293,6 +295,80 @@ def render_dashboard_page() -> None:
         st.dataframe(trend_df, use_container_width=True)
 
 
+def render_ai_analyst_page() -> None:
+    """Render the AI Analyst page: Q&A over the cleaned data.
+
+    Shows example question buttons plus a chat input. Chat history is
+    kept in st.session_state and rendered with st.chat_message.
+    Uses the full cleaned data (df_clean), not dashboard filters.
+    """
+    st.subheader("AI Analyst")
+
+    if "df_clean" not in st.session_state:
+        st.warning("Please upload data first.")
+        return
+
+    df = st.session_state["df_clean"]
+
+    # Build the factual context once and cache it in session state.
+    if "ai_context" not in st.session_state:
+        with st.spinner("Analyzing your data..."):
+            st.session_state["ai_context"] = build_context(df)
+    context = st.session_state["ai_context"]
+
+    # Expander so the user can verify the exact facts sent to the AI.
+    with st.expander("Facts sent to AI"):
+        st.text(context)
+
+    # Show which provider and model is answering.
+    provider_name, model_name = get_provider_info()
+    st.caption(f"AI Analyst: {provider_name} • {model_name}")
+
+    # Initialize chat history.
+    if "ai_messages" not in st.session_state:
+        st.session_state["ai_messages"] = []
+
+    # Example question buttons.
+    st.write("### Try these questions")
+    example_questions = [
+        "Which region needs attention?",
+        "Why did profit change last month?",
+        "Which products should we focus on?",
+        "Give me a summary of business performance",
+    ]
+    cols = st.columns(2)
+    clicked_example = None
+    for i, q in enumerate(example_questions):
+        with cols[i % 2]:
+            if st.button(q, key=f"example_{i}"):
+                clicked_example = q
+
+    st.divider()
+
+    # Chat history.
+    for msg in st.session_state["ai_messages"]:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    # Determine the question to answer (from button or chat input).
+    question = clicked_example
+    if prompt := st.chat_input("Ask the AI Analyst about your business data"):
+        question = prompt
+
+    if question:
+        # Show user message.
+        st.session_state["ai_messages"].append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.write(question)
+
+        # Stream the assistant answer.
+        with st.chat_message("assistant"):
+            full_answer = st.write_stream(
+                ask_analyst_stream(question, context, st.session_state["ai_messages"][:-1])
+            )
+        st.session_state["ai_messages"].append({"role": "assistant", "content": full_answer})
+
+
 def render_guard_page(page_name: str) -> None:
     """Render a 'please upload data first' warning for non-upload pages.
 
@@ -323,6 +399,8 @@ def main() -> None:
         render_upload_page()
     elif current_page == "Dashboard":
         render_dashboard_page()
+    elif current_page == "AI Analyst":
+        render_ai_analyst_page()
     else:
         render_guard_page(current_page)
 
