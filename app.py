@@ -1,11 +1,12 @@
 """InsightOS - AI Business Intelligence Platform.
 
-Phase 4: KPI engine. After data is loaded and cleaned, the Dashboard
-page shows KPI cards and summary tables. The original df stays in
+Phase 5: interactive dashboard with filters and Plotly charts. After
+data is loaded and cleaned, the Dashboard page shows KPI cards, charts,
+and summary tables using filtered data. The original df stays in
 st.session_state["df"] and the cleaned df + report are stored in
 st.session_state["df_clean"] and st.session_state["clean_report"].
 
-Charts and AI are intentionally not implemented yet.
+AI and What-If are intentionally not implemented yet.
 """
 
 import pandas as pd
@@ -23,6 +24,12 @@ from core.kpi import (
     worst_products,
 )
 from core.loader import load_data, load_sample_data, validate_columns
+from ui.charts import (
+    category_donut_chart,
+    regional_chart,
+    revenue_profit_trend_chart,
+    top_products_chart,
+)
 from ui.layout import render_sidebar
 
 REQUIRED_COLUMNS = [
@@ -144,18 +151,72 @@ def render_upload_page() -> None:
 
 
 def render_dashboard_page() -> None:
-    """Render the Dashboard page with KPI cards and data tables."""
+    """Render the Dashboard page with filters, KPI cards, and charts.
+
+    Filters (Date range, Region, Category) are applied to the cleaned
+    data. All KPI cards, charts, and tables use the filtered data.
+    """
     st.subheader("Dashboard")
 
     if "df_clean" not in st.session_state:
         st.warning("Please upload data first.")
         return
 
-    df = st.session_state["df_clean"]
+    df_full = st.session_state["df_clean"]
 
-    # Calculate KPIs.
-    kpis = calculate_core_kpis(df)
-    growth = calculate_growth(df)
+    # ---- Sidebar filters ----
+    with st.sidebar:
+        st.write("### Filters")
+
+        # Date range filter.
+        min_date = df_full["Date"].min().date()
+        max_date = df_full["Date"].max().date()
+        date_range = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+        # Region multiselect.
+        all_regions = sorted(df_full["Region"].unique().tolist())
+        selected_regions = st.multiselect(
+            "Region",
+            options=all_regions,
+            default=all_regions,
+        )
+
+        # Category multiselect.
+        all_categories = sorted(df_full["Category"].unique().tolist())
+        selected_categories = st.multiselect(
+            "Category",
+            options=all_categories,
+            default=all_categories,
+        )
+
+    # ---- Apply filters to build the filtered DataFrame ----
+    filtered = df_full.copy()
+
+    if date_range and len(date_range) == 2:
+        start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+        filtered = filtered[
+            (filtered["Date"] >= start_date) & (filtered["Date"] <= end_date)
+        ]
+
+    if selected_regions:
+        filtered = filtered[filtered["Region"].isin(selected_regions)]
+
+    if selected_categories:
+        filtered = filtered[filtered["Category"].isin(selected_categories)]
+
+    # Guard: zero rows after filtering.
+    if filtered.empty:
+        st.warning("No data matches the selected filters. Try adjusting them.")
+        return
+
+    # ---- Calculate KPIs on filtered data ----
+    kpis = calculate_core_kpis(filtered)
+    growth = calculate_growth(filtered)
 
     # Row 1: 4 core KPI cards (Revenue, Profit, Orders, Growth %).
     st.write("### Key Performance Indicators")
@@ -169,7 +230,7 @@ def render_dashboard_page() -> None:
     with m4:
         delta = growth["revenue_growth_pct"]
         delta_str = f"{delta:+.1f}%" if delta is not None else None
-        st.metric("Growth %", delta_str, delta=delta_str)
+        st.metric("Growth %", delta_str if delta_str else "N/A", delta=delta_str)
 
     # Row 2: Profit Margin, Avg Order Value, Customers.
     m5, m6, m7 = st.columns(3)
@@ -182,24 +243,54 @@ def render_dashboard_page() -> None:
 
     st.divider()
 
-    # Tables section.
-    st.write("### Top Products")
-    st.dataframe(top_products(df), use_container_width=True)
+    # ---- Trend chart (full width) ----
+    st.write("### Revenue & Profit Trend")
+    trend_df = monthly_trend(filtered)
+    fig_trend = revenue_profit_trend_chart(trend_df)
+    st.plotly_chart(fig_trend, use_container_width=True)
 
-    st.write("### Worst Products")
-    st.dataframe(worst_products(df), use_container_width=True)
+    # ---- Two columns: top products chart | regional chart ----
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.write("### Top Products")
+        top_df = top_products(filtered)
+        fig_products = top_products_chart(top_df)
+        st.plotly_chart(fig_products, use_container_width=True)
 
-    st.write("### Regional Performance")
-    st.dataframe(regional_performance(df), use_container_width=True)
+    with col_right:
+        st.write("### Regional Performance")
+        region_df = regional_performance(filtered)
+        fig_region = regional_chart(region_df)
+        st.plotly_chart(fig_region, use_container_width=True)
 
-    st.write("### Category Performance")
-    st.dataframe(category_performance(df), use_container_width=True)
+    # ---- Category donut next to top customers table ----
+    col_cat, col_cust = st.columns(2)
+    with col_cat:
+        st.write("### Revenue Share by Category")
+        cat_df = category_performance(filtered)
+        fig_cat = category_donut_chart(cat_df)
+        st.plotly_chart(fig_cat, use_container_width=True)
 
-    st.write("### Top Customers")
-    st.dataframe(top_customers(df), use_container_width=True)
+    with col_cust:
+        st.write("### Top Customers")
+        st.dataframe(top_customers(filtered), use_container_width=True)
 
-    st.write("### Monthly Trend")
-    st.dataframe(monthly_trend(df), use_container_width=True)
+    # ---- Detailed tables inside expanders ----
+    with st.expander("View detailed tables"):
+        st.write("#### Top Products")
+        st.dataframe(top_products(filtered), use_container_width=True)
+
+        st.write("#### Worst Products")
+        st.dataframe(worst_products(filtered), use_container_width=True)
+
+        st.write("#### Regional Performance")
+        st.dataframe(regional_performance(filtered), use_container_width=True)
+
+        st.write("#### Category Performance")
+        st.dataframe(category_performance(filtered), use_container_width=True)
+
+        st.write("#### Monthly Trend")
+        st.dataframe(trend_df, use_container_width=True)
 
 
 def render_guard_page(page_name: str) -> None:

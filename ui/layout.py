@@ -28,6 +28,6 @@ def render_sidebar() -> str:
         st.session_state.current_page = selection
 
         st.divider()
-        st.caption("InsightOS v1.0 (Phase 4)")
+        st.caption("InsightOS v1.0 (Phase 5)")
 
     return st.session_state.current_page
