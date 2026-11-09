@@ -1,4 +1,4 @@
-﻿# InsightOS
+# InsightOS
 
 Turn raw business data into decisions.
 
@@ -33,25 +33,25 @@ What-If Simulator:
 
 ## Features
 
-- **Upload Data** â€” Upload CSV or Excel files. Required columns are
+- **Upload Data** — Upload CSV or Excel files. Required columns are
   validated before processing; a bundled `data/sample_sales.csv` is
   included for instant testing.
-- **Automatic data cleaning** â€” Cleans the uploaded data (title-casing,
+- **Automatic data cleaning** — Cleans the uploaded data (title-casing,
   date parsing, duplicate removal, missing value handling, negative
   value filtering) and produces a cleaning report with counts of rows
   removed or filled (duplicates, invalid dates, invalid numbers,
   negative values, missing values).
-- **KPI engine** â€” Revenue, profit, profit margin, orders, average order
+- **KPI engine** — Revenue, profit, profit margin, orders, average order
   value, unique customers, month-over-month growth, monthly trends, top
   and bottom products, regional and category performance, top customers,
   and driver analysis.
-- **Interactive dashboard** â€” KPI cards, charts, and tables with date
+- **Interactive dashboard** — KPI cards, charts, and tables with date
   range, region, and category filters.
-- **AI Analyst** â€” Ask natural-language questions about your business
+- **AI Analyst** — Ask natural-language questions about your business
   data. The AI answers only from a pandas-computed fact sheet and is
   instructed not to calculate or rank numbers; rankings are precomputed
   in pandas. The "Facts sent to AI" expander lets you verify any answer.
-- **What-If Simulator** â€” Model price, volume, and cost changes with
+- **What-If Simulator** — Model price, volume, and cost changes with
   sliders and see the impact on revenue, cost, profit, and margin.
   Includes quick scenario buttons and region/category filters.
 
@@ -73,44 +73,44 @@ context text sent to the model, so you can verify any answer.
 ## Tech stack
 
 - Python 3
-- pandas â€” data cleaning and all calculations
-- Plotly â€” interactive charts
-- Streamlit â€” web UI
-- openai package â€” OpenAI-compatible client for OpenRouter and Gemini
-- python-dotenv â€” environment variable loading
-- pytest â€” testing
+- pandas — data cleaning and all calculations
+- Plotly — interactive charts
+- Streamlit — web UI
+- openai package — OpenAI-compatible client for OpenRouter and Gemini
+- python-dotenv — environment variable loading
+- pytest — testing
 
 ## Project structure
 
 ```
 insightos/
-â”œâ”€â”€ app.py                      # Streamlit entry point; page routing and UI
-â”œâ”€â”€ README.md                   # This file
-â”œâ”€â”€ requirements.txt            # Python dependencies
-â”œâ”€â”€ .env.example                # Example environment variables (copy to .env)
-â”œâ”€â”€ .streamlit/
-â”‚   â””â”€â”€ config.toml             # Streamlit dark theme configuration
-â”œâ”€â”€ core/
-â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”œâ”€â”€ loader.py               # CSV/Excel loading and column validation
-â”‚   â”œâ”€â”€ cleaner.py              # Data cleaning and cleaning report
-â”‚   â”œâ”€â”€ kpi.py                  # KPI engine + what-if simulation
-â”‚   â””â”€â”€ ai_analyst.py           # AI Analyst context builder + OpenAI client
-â”œâ”€â”€ ui/
-â”‚   â”œâ”€â”€ __init__.py
-â”‚   â”œâ”€â”€ layout.py               # Sidebar navigation
-â”‚   â””â”€â”€ charts.py               # Plotly chart builders
-â”œâ”€â”€ data/
-â”‚   â””â”€â”€ sample_sales.csv        # Bundled sample dataset (200 rows)
-â”œâ”€â”€ assets/
-â”‚   â””â”€â”€ screenshots/
-â”‚       â”œâ”€â”€ dashboard-overview.png
-â”‚       â”œâ”€â”€ dashboard-filtered.png
-â”‚       â”œâ”€â”€ dashboard-filtered-2.png
-â”‚       â”œâ”€â”€ ai-analyst.png
-â”‚       â””â”€â”€ whatif-simulator.png
-â””â”€â”€ tests/
-    â””â”€â”€ test_kpi.py             # Pytest test suite
+├── app.py                      # Streamlit entry point; page routing and UI
+├── README.md                   # This file
+├── requirements.txt            # Python dependencies
+├── .env.example                # Example environment variables (copy to .env)
+├── .streamlit/
+│   └── config.toml             # Streamlit dark theme configuration
+├── core/
+│   ├── __init__.py
+│   ├── loader.py               # CSV/Excel loading and column validation
+│   ├── cleaner.py              # Data cleaning and cleaning report
+│   ├── kpi.py                  # KPI engine + what-if simulation
+│   └── ai_analyst.py           # AI Analyst context builder + OpenAI client
+├── ui/
+│   ├── __init__.py
+│   ├── layout.py               # Sidebar navigation
+│   └── charts.py               # Plotly chart builders
+├── data/
+│   └── sample_sales.csv        # Bundled sample dataset (200 rows)
+├── assets/
+│   └── screenshots/
+│       ├── dashboard-overview.png
+│       ├── dashboard-filtered.png
+│       ├── dashboard-filtered-2.png
+│       ├── ai-analyst.png
+│       └── whatif-simulator.png
+└── tests/
+    └── test_kpi.py             # Pytest test suite
 ```
 
 ## Getting started
@@ -142,7 +142,7 @@ streamlit run app.py
 The AI Analyst requires an API key in `.env` (`OPENROUTER_API_KEY` or
 `GEMINI_API_KEY`, plus `AI_PROVIDER`). The rest of the app (upload,
 cleaning, dashboard, what-if) works without any API key. Never commit
-`.env` â€” copy `.env.example` instead.
+`.env` — copy `.env.example` instead.
 
 ## Required data columns
 
