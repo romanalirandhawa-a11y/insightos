@@ -9,6 +9,8 @@ in natural language via an AI Analyst, and run what-if simulations. All
 numbers are computed with pandas; the AI only explains a precomputed fact
 sheet.
 
+**Live demo:** https://insightos-bi.streamlit.app/ (AI Analyst is disabled in the public demo; run locally with your own API key to try it.)
+
 ## Screenshots
 
 Dashboard overview:
