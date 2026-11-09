@@ -193,6 +193,17 @@ def _get_provider() -> str:
     return os.getenv("AI_PROVIDER", DEFAULT_PROVIDER)
 
 
+def ai_is_configured() -> bool:
+    """Return True if at least one AI provider has a non-empty API key.
+
+    Checks OPENROUTER_API_KEY and GEMINI_API_KEY environment variables.
+    Never returns or logs the key value itself.
+    """
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    return bool(openrouter_key) or bool(gemini_key)
+
+
 def _get_client(provider: str) -> OpenAI | None:
     """Return an OpenAI client configured for the given provider, or None
     if the required API key is missing.

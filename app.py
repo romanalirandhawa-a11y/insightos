@@ -10,10 +10,12 @@ the cleaned df + report are stored in st.session_state["df_clean"]
 and st.session_state["clean_report"].
 """
 
+import os
+
 import pandas as pd
 import streamlit as st
 
-from core.ai_analyst import ask_analyst_stream, build_context, get_provider_info
+from core.ai_analyst import ai_is_configured, ask_analyst_stream, build_context, get_provider_info
 from core.cleaner import clean_data
 from core.kpi import (
     calculate_core_kpis,
@@ -303,6 +305,9 @@ def render_ai_analyst_page() -> None:
     Shows example question buttons plus a chat input. Chat history is
     kept in st.session_state and rendered with st.chat_message.
     Uses the full cleaned data (df_clean), not dashboard filters.
+
+    If no AI provider key is configured, shows a disabled-mode message
+    with an example screenshot instead of the chat box.
     """
     st.subheader("AI Analyst")
 
@@ -313,11 +318,37 @@ def render_ai_analyst_page() -> None:
     df = st.session_state["df_clean"]
 
     # Build the factual context once and cache it in session state.
+    # Visitors can inspect this even when no AI provider is configured.
     if "ai_context" not in st.session_state:
         with st.spinner("Analyzing your data..."):
             st.session_state["ai_context"] = build_context(df)
     context = st.session_state["ai_context"]
 
+    configured = ai_is_configured()
+
+    if not configured:
+        # Public demo mode: no API key configured. Show info box,
+        # example screenshot, and facts expander (no chat).
+        st.info(
+            "AI Analyst is disabled in this public demo. "
+            "The AI needs a personal API key to avoid exhausting free "
+            "usage limits. Everything else (dashboard, What-If "
+            "simulator) works without a key. To try the AI Analyst, "
+            "run the project locally with your own key — see the "
+            "README on GitHub: "
+            "https://github.com/romanalirandhawa-a11y/insightos"
+        )
+
+        image_path = "assets/screenshots/ai-analyst.png"
+        if os.path.exists(image_path):
+            st.image(image_path, caption="Example AI Analyst answer (running locally)")
+
+        # Expander so visitors can still see the fact sheet the AI would receive.
+        with st.expander("Facts sent to AI"):
+            st.text(context)
+        return
+
+    # Normal chat mode: provider key is configured.
     # Expander so the user can verify the exact facts sent to the AI.
     with st.expander("Facts sent to AI"):
         st.text(context)

@@ -1066,3 +1066,56 @@ def test_set_wi_scenario_reset():
     finally:
         st.session_state = original_session_state
 
+
+# ---- ai_is_configured tests ----
+
+
+def test_ai_is_configured_openrouter_key():
+    saved = _save_env()
+    try:
+        _set_env(AI_PROVIDER="openrouter", OPENROUTER_API_KEY="sk-or-test123", GEMINI_API_KEY=None)
+        from core.ai_analyst import ai_is_configured
+        assert ai_is_configured() is True
+    finally:
+        _restore_env(saved)
+
+
+def test_ai_is_configured_gemini_key():
+    saved = _save_env()
+    try:
+        _set_env(AI_PROVIDER="gemini", OPENROUTER_API_KEY=None, GEMINI_API_KEY="fake-gemini-key")
+        from core.ai_analyst import ai_is_configured
+        assert ai_is_configured() is True
+    finally:
+        _restore_env(saved)
+
+
+def test_ai_is_configured_both_keys():
+    saved = _save_env()
+    try:
+        _set_env(AI_PROVIDER="openrouter", OPENROUTER_API_KEY="sk-or-test123", GEMINI_API_KEY="fake-gemini-key")
+        from core.ai_analyst import ai_is_configured
+        assert ai_is_configured() is True
+    finally:
+        _restore_env(saved)
+
+
+def test_ai_is_configured_no_keys():
+    saved = _save_env()
+    try:
+        _set_env(AI_PROVIDER="openrouter", OPENROUTER_API_KEY=None, GEMINI_API_KEY=None)
+        from core.ai_analyst import ai_is_configured
+        assert ai_is_configured() is False
+    finally:
+        _restore_env(saved)
+
+
+def test_ai_is_configured_empty_keys():
+    saved = _save_env()
+    try:
+        _set_env(AI_PROVIDER="openrouter", OPENROUTER_API_KEY="", GEMINI_API_KEY="   ")
+        from core.ai_analyst import ai_is_configured
+        assert ai_is_configured() is False
+    finally:
+        _restore_env(saved)
+
