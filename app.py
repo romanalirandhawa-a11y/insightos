@@ -36,7 +36,15 @@ from ui.charts import (
     scenario_bar_chart,
     top_products_chart,
 )
-from ui.layout import render_sidebar
+from ui.layout import (
+    render_css,
+    render_empty_state,
+    render_feature_cards,
+    render_header,
+    render_hero_header,
+    render_kpi_card,
+    render_sidebar,
+)
 
 REQUIRED_COLUMNS = [
     "Date",
@@ -60,13 +68,6 @@ def set_page_config() -> None:
     )
 
 
-def render_header() -> None:
-    """Render the app header with name and tagline."""
-    st.title("\U0001F4CA InsightOS")
-    st.caption("Turn raw business data into decisions")
-    st.divider()
-
-
 def _run_cleaning(df: pd.DataFrame) -> None:
     """Run clean_data on a DataFrame and store results in session state.
 
@@ -78,34 +79,77 @@ def _run_cleaning(df: pd.DataFrame) -> None:
     st.session_state["clean_report"] = report
 
 
+def _date_range_label(df: pd.DataFrame) -> str:
+    """Return a human-readable date range string from the data.
+
+    Args:
+        df: DataFrame with a Date column.
+
+    Returns:
+        A string like "Jan 2026 - Oct 2026" or empty string.
+    """
+    try:
+        d_min = pd.to_datetime(df["Date"].min())
+        d_max = pd.to_datetime(df["Date"].max())
+        return f"{d_min.strftime('%b %Y')} \u2022 {d_max.strftime('%b %Y')}"
+    except Exception:
+        return ""
+
+
+def render_chart_card(title: str, subtitle: str, fig) -> None:
+    """Render a Plotly figure inside a bordered chart card.
+
+    Args:
+        title: Card title shown above the chart.
+        subtitle: Optional subtitle text.
+        fig: A plotly Figure.
+    """
+    with st.container(border=True):
+        st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+        if subtitle:
+            st.markdown(f'<div class="chart-subtitle">{subtitle}</div>', unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def render_upload_page() -> None:
-    """Render the Upload Data page: uploader, cleaning, and report."""
-    st.subheader("Upload Data")
-    st.write(
-        "Upload your sales data (CSV or Excel) to get started. "
-        "Required columns: " + ", ".join(REQUIRED_COLUMNS) + "."
-    )
+    """Render the Upload Data page: hero header, feature cards, uploader."""
+    render_hero_header()
 
-    uploaded_file = st.file_uploader("Choose a file", type=["csv", "xlsx"])
-    use_sample = st.button("Use sample data")
+    render_feature_cards()
 
-    if use_sample:
-        try:
-            df = load_sample_data()
-            st.session_state["df"] = df
-            st.success("Sample data loaded successfully.")
-            _run_cleaning(df)
-        except (FileNotFoundError, ValueError) as exc:
-            st.error(str(exc))
+    # Uploader card.
+    with st.container(border=True):
+        st.markdown("### \U0001F4C2 Upload your data")
+        st.markdown(
+            "Upload your sales data (CSV or Excel) to get started. "
+            "Required columns: " + ", ".join(REQUIRED_COLUMNS) + "."
+        )
 
-    elif uploaded_file is not None:
-        try:
-            df = load_data(uploaded_file)
-            st.session_state["df"] = df
-            st.success(f"File '{uploaded_file.name}' loaded successfully.")
-            _run_cleaning(df)
-        except ValueError as exc:
-            st.error(str(exc))
+        col_up, col_btn = st.columns([3, 1])
+        with col_up:
+            uploaded_file = st.file_uploader(
+                "Choose a file", type=["csv", "xlsx"], label_visibility="collapsed"
+            )
+        with col_btn:
+            use_sample = st.button("Use sample data", use_container_width=True)
+
+        if use_sample:
+            try:
+                df = load_sample_data()
+                st.session_state["df"] = df
+                st.success("Sample data loaded successfully.")
+                _run_cleaning(df)
+            except (FileNotFoundError, ValueError) as exc:
+                st.error(str(exc))
+
+        elif uploaded_file is not None:
+            try:
+                df = load_data(uploaded_file)
+                st.session_state["df"] = df
+                st.success(f"File '{uploaded_file.name}' loaded successfully.")
+                _run_cleaning(df)
+            except ValueError as exc:
+                st.error(str(exc))
 
     # Display the loaded data and cleaning report if available.
     if "df" in st.session_state:
@@ -119,35 +163,30 @@ def render_upload_page() -> None:
             )
         else:
             rows, cols = df.shape
-            st.info(f"Loaded {rows} rows and {cols} columns.")
+            st.success(f"Loaded {rows} rows and {cols} columns.")
 
-            st.subheader("Preview (first 10 rows)")
-            st.dataframe(df.head(10), use_container_width=True)
-
-            # Data Cleaning Report section.
+            st.markdown("### \U0001F4C7 Data Cleaning Report")
             if "clean_report" in st.session_state:
                 report = st.session_state["clean_report"]
-                st.subheader("Data Cleaning Report")
-
                 m1, m2, m3, m4 = st.columns(4)
                 with m1:
-                    st.metric("Rows before", report["rows_before"])
+                    render_kpi_card("Rows before", f"{report['rows_before']:,}")
                 with m2:
-                    st.metric("Rows after", report["rows_after"])
+                    render_kpi_card("Rows after", f"{report['rows_after']:,}")
                 with m3:
-                    st.metric("Duplicates removed", report["duplicates_removed"])
+                    render_kpi_card("Duplicates removed", f"{report['duplicates_removed']:,}")
                 with m4:
-                    st.metric("Invalid dates removed", report["invalid_dates_removed"])
+                    render_kpi_card("Invalid dates removed", f"{report['invalid_dates_removed']:,}")
 
                 m5, m6, m7, m8 = st.columns(4)
                 with m5:
-                    st.metric("Invalid numbers removed", report["invalid_numbers_removed"])
+                    render_kpi_card("Invalid numbers removed", f"{report['invalid_numbers_removed']:,}")
                 with m6:
-                    st.metric("Missing values filled", report["missing_values_filled"])
+                    render_kpi_card("Missing values filled", f"{report['missing_values_filled']:,}")
                 with m7:
-                    st.metric("Negative rows removed", report["negative_removed"])
+                    render_kpi_card("Negative rows removed", f"{report['negative_removed']:,}")
                 with m8:
-                    st.metric("Final rows", len(st.session_state["df_clean"]))
+                    render_kpi_card("Final rows", f"{len(st.session_state['df_clean']):,}")
 
                 with st.expander("View cleaned data preview"):
                     st.dataframe(
@@ -162,43 +201,55 @@ def render_dashboard_page() -> None:
     Filters (Date range, Region, Category) are applied to the cleaned
     data. All KPI cards, charts, and tables use the filtered data.
     """
-    st.subheader("Dashboard")
-
     if "df_clean" not in st.session_state:
-        st.warning("Please upload data first.")
+        render_header()
+        render_empty_state(
+            "No data yet",
+            "Upload your sales data on the Upload Data page to get started.",
+        )
         return
 
     df_full = st.session_state["df_clean"]
 
-    # ---- Sidebar filters ----
-    with st.sidebar:
-        st.write("### Filters")
+    # Header with status line.
+    render_header(
+        rows=len(df_full),
+        date_range=_date_range_label(df_full),
+    )
 
-        # Date range filter.
-        min_date = df_full["Date"].min().date()
-        max_date = df_full["Date"].max().date()
-        date_range = st.date_input(
-            "Date range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-        )
+    # ---- Slim filter bar ----
+    st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+    st.markdown('<div class="filter-title">\U0001F50D Filters</div>', unsafe_allow_html=True)
 
-        # Region multiselect.
+    min_date = df_full["Date"].min().date()
+    max_date = df_full["Date"].max().date()
+    date_range = st.date_input(
+        "Date range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+        label_visibility="collapsed",
+    )
+
+    col_r, col_c = st.columns(2)
+    with col_r:
         all_regions = sorted(df_full["Region"].unique().tolist())
         selected_regions = st.multiselect(
             "Region",
             options=all_regions,
             default=all_regions,
+            label_visibility="collapsed",
         )
-
-        # Category multiselect.
+    with col_c:
         all_categories = sorted(df_full["Category"].unique().tolist())
         selected_categories = st.multiselect(
             "Category",
             options=all_categories,
             default=all_categories,
+            label_visibility="collapsed",
         )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ---- Apply filters to build the filtered DataFrame ----
     filtered = df_full.copy()
@@ -217,85 +268,92 @@ def render_dashboard_page() -> None:
 
     # Guard: zero rows after filtering.
     if filtered.empty:
-        st.warning("No data matches the selected filters. Try adjusting them.")
+        render_empty_state(
+            "No data matches your filters",
+            "Try adjusting the date range, region, or category filters.",
+        )
         return
 
     # ---- Calculate KPIs on filtered data ----
     kpis = calculate_core_kpis(filtered)
     growth = calculate_growth(filtered)
 
-    # Row 1: 4 core KPI cards (Revenue, Profit, Orders, Growth %).
-    st.write("### Key Performance Indicators")
+    # ---- Row 1: 4 core KPI cards ----
+    st.markdown('<div class="section-title">Key Performance Indicators</div>', unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Revenue", f"${kpis['total_revenue']:,.2f}")
+        render_kpi_card("Revenue", f"${kpis['total_revenue']:,.2f}", kpi_type="revenue")
     with m2:
-        st.metric("Profit", f"${kpis['total_profit']:,.2f}")
+        render_kpi_card("Profit", f"${kpis['total_profit']:,.2f}", kpi_type="profit")
     with m3:
-        st.metric("Orders", kpis["total_orders"])
+        render_kpi_card("Orders", f"{kpis['total_orders']:,}", kpi_type="orders")
     with m4:
         delta = growth["revenue_growth_pct"]
         delta_str = f"{delta:+.1f}%" if delta is not None else None
-        st.metric("Growth %", delta_str if delta_str else "N/A", delta=delta_str)
+        render_kpi_card("Growth %", delta_str if delta_str else "N/A", kpi_type="growth")
 
-    # Row 2: Profit Margin, Avg Order Value, Customers.
+    # ---- Row 2: Profit Margin, Avg Order Value, Customers ----
     m5, m6, m7 = st.columns(3)
     with m5:
-        st.metric("Profit Margin", f"{kpis['profit_margin_pct']:.1f}%")
+        render_kpi_card("Profit Margin", f"{kpis['profit_margin_pct']:.1f}%", kpi_type="margin")
     with m6:
-        st.metric("Avg Order Value", f"${kpis['avg_order_value']:,.2f}")
+        render_kpi_card("Avg Order Value", f"${kpis['avg_order_value']:,.2f}", kpi_type="avg-order-value")
     with m7:
-        st.metric("Customers", kpis["total_customers"])
+        render_kpi_card("Customers", f"{kpis['total_customers']:,}", kpi_type="customers")
 
-    st.divider()
-
-    # ---- Trend chart (full width) ----
-    st.write("### Revenue & Profit Trend")
+    # ---- Chart cards ----
     trend_df = monthly_trend(filtered)
-    fig_trend = revenue_profit_trend_chart(trend_df)
-    st.plotly_chart(fig_trend, use_container_width=True)
+    render_chart_card(
+        "Revenue and Profit Trend",
+        "Monthly revenue and profit over time.",
+        revenue_profit_trend_chart(trend_df),
+    )
 
-    # ---- Two columns: top products chart | regional chart ----
     col_left, col_right = st.columns(2)
     with col_left:
-        st.write("### Top Products")
         top_df = top_products(filtered)
-        fig_products = top_products_chart(top_df)
-        st.plotly_chart(fig_products, use_container_width=True)
+        render_chart_card(
+            "Top Products",
+            "Top products by revenue.",
+            top_products_chart(top_df),
+        )
 
     with col_right:
-        st.write("### Regional Performance")
         region_df = regional_performance(filtered)
-        fig_region = regional_chart(region_df)
-        st.plotly_chart(fig_region, use_container_width=True)
+        render_chart_card(
+            "Regional Performance",
+            "Revenue and profit by region.",
+            regional_chart(region_df),
+        )
 
-    # ---- Category donut next to top customers table ----
     col_cat, col_cust = st.columns(2)
     with col_cat:
-        st.write("### Revenue Share by Category")
         cat_df = category_performance(filtered)
-        fig_cat = category_donut_chart(cat_df)
-        st.plotly_chart(fig_cat, use_container_width=True)
+        render_chart_card(
+            "Revenue Share by Category",
+            "How revenue is split across categories.",
+            category_donut_chart(cat_df),
+        )
 
     with col_cust:
-        st.write("### Top Customers")
+        st.markdown('<div class="section-title">Top Customers</div>', unsafe_allow_html=True)
         st.dataframe(top_customers(filtered), use_container_width=True)
 
     # ---- Detailed tables inside expanders ----
     with st.expander("View detailed tables"):
-        st.write("#### Top Products")
+        st.markdown("#### Top Products")
         st.dataframe(top_products(filtered), use_container_width=True)
 
-        st.write("#### Worst Products")
+        st.markdown("#### Worst Products")
         st.dataframe(worst_products(filtered), use_container_width=True)
 
-        st.write("#### Regional Performance")
+        st.markdown("#### Regional Performance")
         st.dataframe(regional_performance(filtered), use_container_width=True)
 
-        st.write("#### Category Performance")
+        st.markdown("#### Category Performance")
         st.dataframe(category_performance(filtered), use_container_width=True)
 
-        st.write("#### Monthly Trend")
+        st.markdown("#### Monthly Trend")
         st.dataframe(trend_df, use_container_width=True)
 
 
@@ -309,43 +367,60 @@ def render_ai_analyst_page() -> None:
     If no AI provider key is configured, shows a disabled-mode message
     with an example screenshot instead of the chat box.
     """
-    st.subheader("AI Analyst")
-
     if "df_clean" not in st.session_state:
-        st.warning("Please upload data first.")
+        render_header()
+        render_empty_state(
+            "No data yet",
+            "Upload your sales data on the Upload Data page to get started.",
+        )
         return
 
     df = st.session_state["df_clean"]
 
+    # Header with status line.
+    render_header(
+        rows=len(df),
+        date_range=_date_range_label(df),
+    )
+
     # Build the factual context once and cache it in session state.
     # Visitors can inspect this even when no AI provider is configured.
-    if "ai_context" not in st.session_state:
-        with st.spinner("Analyzing your data..."):
-            st.session_state["ai_context"] = build_context(df)
-    context = st.session_state["ai_context"]
+    try:
+        if "ai_context" not in st.session_state:
+            with st.spinner("Analyzing your data..."):
+                st.session_state["ai_context"] = build_context(df)
+        context = st.session_state["ai_context"]
+    except Exception as exc:
+        provider_name, model_name = get_provider_info()
+        st.error(
+            "Failed to build the data context for the AI Analyst. "
+            f"Provider: {provider_name}, Model: {model_name}. "
+            "Please try reloading the page or check your data file."
+        )
+        context = ""
 
     configured = ai_is_configured()
 
     if not configured:
-        # Public demo mode: no API key configured. Show info box,
-        # example screenshot, and facts expander (no chat).
-        st.info(
-            "AI Analyst is disabled in this public demo. "
-            "The AI needs a personal API key to avoid exhausting free "
-            "usage limits. Everything else (dashboard, What-If "
-            "simulator) works without a key. To try the AI Analyst, "
-            "run the project locally with your own key — see the "
-            "README on GitHub: "
-            "https://github.com/romanalirandhawa-a11y/insightos"
-        )
+        # Public demo mode: no API key configured.
+        with st.container(border=True):
+            st.info(
+                "AI Analyst is disabled in this public demo. "
+                "The AI needs a personal API key to avoid exhausting free "
+                "usage limits. Everything else (dashboard, What-If "
+                "simulator) works without a key. To try the AI Analyst, "
+                "run the project locally with your own key \u2014 see the "
+                "README on GitHub: "
+                "https://github.com/romanalirandhawa-a11y/insightos"
+            )
 
-        image_path = "assets/screenshots/ai-analyst.png"
-        if os.path.exists(image_path):
-            st.image(image_path, caption="Example AI Analyst answer (running locally)")
+            image_path = "assets/screenshots/ai-analyst.png"
+            if os.path.exists(image_path):
+                st.image(image_path, caption="Example AI Analyst answer (running locally)")
 
-        # Expander so visitors can still see the fact sheet the AI would receive.
-        with st.expander("Facts sent to AI"):
-            st.text(context)
+            # Expander so visitors can still see the fact sheet the AI would receive.
+            with st.expander("Facts sent to AI"):
+                st.text(context)
         return
 
     # Normal chat mode: provider key is configured.
@@ -354,15 +429,18 @@ def render_ai_analyst_page() -> None:
         st.text(context)
 
     # Show which provider and model is answering.
-    provider_name, model_name = get_provider_info()
-    st.caption(f"AI Analyst: {provider_name} • {model_name}")
+    try:
+        provider_name, model_name = get_provider_info()
+    except Exception:
+        provider_name, model_name = "unknown", "unknown"
+    st.caption(f"AI Analyst: {provider_name} \u2022 {model_name}")
 
     # Initialize chat history.
     if "ai_messages" not in st.session_state:
         st.session_state["ai_messages"] = []
 
     # Example question buttons.
-    st.write("### Try these questions")
+    st.markdown("### Try these questions")
     example_questions = [
         "Which region needs attention?",
         "Why did profit change last month?",
@@ -396,9 +474,18 @@ def render_ai_analyst_page() -> None:
 
         # Stream the assistant answer.
         with st.chat_message("assistant"):
-            full_answer = st.write_stream(
-                ask_analyst_stream(question, context, st.session_state["ai_messages"][:-1])
-            )
+            try:
+                full_answer = st.write_stream(
+                    ask_analyst_stream(question, context, st.session_state["ai_messages"][:-1])
+                )
+            except Exception as exc:
+                provider_name, model_name = get_provider_info()
+                full_answer = (
+                    f"Sorry, the AI Analyst encountered an error. "
+                    f"(Provider: {provider_name}, Model: {model_name}). "
+                    "Please try again or check your API key configuration."
+                )
+                st.write(full_answer)
         st.session_state["ai_messages"].append({"role": "assistant", "content": full_answer})
 
 
@@ -426,13 +513,21 @@ def render_what_if_page() -> None:
     impact on Revenue, Cost, Profit, and Margin. Uses pandas only
     (core.kpi.simulate_scenario) - no AI involved.
     """
-    st.subheader("What-If Simulator")
-
     if "df_clean" not in st.session_state:
-        st.warning("Please upload data first.")
+        render_header()
+        render_empty_state(
+            "No data yet",
+            "Upload your sales data on the Upload Data page to get started.",
+        )
         return
 
     df_full = st.session_state["df_clean"]
+
+    # Header with status line.
+    render_header(
+        rows=len(df_full),
+        date_range=_date_range_label(df_full),
+    )
 
     # Initialize slider values in session state (only if not set yet).
     if "wi_price" not in st.session_state:
@@ -449,7 +544,7 @@ def render_what_if_page() -> None:
         _set_wi_scenario(price, volume, cost)
 
     # Quick scenario buttons with on_click callbacks.
-    st.write("### Quick Scenarios")
+    st.markdown("### \U0001F527 Quick Scenarios")
     col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
     with col_btn1:
         st.button(
@@ -480,168 +575,172 @@ def render_what_if_page() -> None:
             args=(0, 0, 0),
         )
 
-    st.divider()
+    with st.container(border=True):
+        # Sliders controlled by session_state keys. Do NOT pass a default
+        # value to a session_state-controlled slider (Streamlit warns).
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            price_change = st.slider(
+                "Price change (%)",
+                min_value=-30,
+                max_value=30,
+                step=1,
+                key="wi_price",
+            )
+        with col_s2:
+            volume_change = st.slider(
+                "Sales volume change (%)",
+                min_value=-50,
+                max_value=50,
+                step=1,
+                key="wi_volume",
+            )
+        with col_s3:
+            cost_change = st.slider(
+                "Cost change (%)",
+                min_value=-30,
+                max_value=30,
+                step=1,
+                key="wi_cost",
+            )
 
-    # Sliders controlled by session_state keys. Do NOT pass a default
-    # value to a session_state-controlled slider (Streamlit warns).
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        price_change = st.slider(
-            "Price change (%)",
-            min_value=-30,
-            max_value=30,
-            step=1,
-            key="wi_price",
-        )
-    with col_s2:
-        volume_change = st.slider(
-            "Sales volume change (%)",
-            min_value=-50,
-            max_value=50,
-            step=1,
-            key="wi_volume",
-        )
-    with col_s3:
-        cost_change = st.slider(
-            "Cost change (%)",
-            min_value=-30,
-            max_value=30,
-            step=1,
-            key="wi_cost",
+        # Region and category filters.
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            all_regions = sorted(df_full["Region"].unique().tolist())
+            selected_regions = st.multiselect(
+                "Region",
+                options=all_regions,
+                default=all_regions,
+                key="wi_region",
+            )
+        with col_f2:
+            all_categories = sorted(df_full["Category"].unique().tolist())
+            selected_categories = st.multiselect(
+                "Category",
+                options=all_categories,
+                default=all_categories,
+                key="wi_category",
+            )
+
+        # Apply filters to build simulation DataFrame.
+        sim_df = df_full.copy()
+        if selected_regions:
+            sim_df = sim_df[sim_df["Region"].isin(selected_regions)]
+        if selected_categories:
+            sim_df = sim_df[sim_df["Category"].isin(selected_categories)]
+
+        if sim_df.empty:
+            render_empty_state(
+                "No data matches your filters",
+                "Try adjusting the region or category filters.",
+            )
+            return
+
+        # Run the simulation.
+        try:
+            result = simulate_scenario(
+                sim_df,
+                price_change_pct=price_change,
+                volume_change_pct=volume_change,
+                cost_change_pct=cost_change,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        # Current vs Scenario KPI cards.
+        st.markdown('<div class="section-title">Current vs Scenario</div>', unsafe_allow_html=True)
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            render_kpi_card(
+                "Revenue",
+                f"${result['scenario_revenue']:,.2f}",
+                delta=f"${result['revenue_change']:,.2f}",
+                kpi_type="revenue",
+            )
+        with m2:
+            render_kpi_card(
+                "Profit",
+                f"${result['scenario_profit']:,.2f}",
+                delta=f"${result['profit_change']:,.2f}",
+                kpi_type="profit",
+            )
+        with m3:
+            render_kpi_card(
+                "Margin",
+                f"{result['scenario_margin_pct']:.1f}%",
+                delta=f"{result['margin_change_points']:+.1f} pts",
+                kpi_type="margin",
+            )
+
+        # Grouped bar chart.
+        st.markdown('<div class="section-title">Revenue, Cost, Profit Comparison</div>', unsafe_allow_html=True)
+        current = {
+            "Revenue": result["current_revenue"],
+            "Cost": result["current_cost"],
+            "Profit": result["current_profit"],
+        }
+        scenario_vals = {
+            "Revenue": result["scenario_revenue"],
+            "Cost": result["scenario_cost"],
+            "Profit": result["scenario_profit"],
+        }
+        render_chart_card(
+            "Current vs Scenario",
+            "Simulated impact of price, volume, and cost changes.",
+            scenario_bar_chart(current, scenario_vals),
         )
 
-    # Region and category filters.
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        all_regions = sorted(df_full["Region"].unique().tolist())
-        selected_regions = st.multiselect(
-            "Region",
-            options=all_regions,
-            default=all_regions,
-            key="wi_region",
-        )
-    with col_f2:
-        all_categories = sorted(df_full["Category"].unique().tolist())
-        selected_categories = st.multiselect(
-            "Category",
-            options=all_categories,
-            default=all_categories,
-            key="wi_category",
+        # Assumptions note.
+        st.info(
+            "Simple estimate. Assumes the volume slider already includes any "
+            "customer reaction to price changes. Cost scales with volume."
         )
 
-    # Apply filters to build simulation DataFrame.
-    sim_df = df_full.copy()
-    if selected_regions:
-        sim_df = sim_df[sim_df["Region"].isin(selected_regions)]
-    if selected_categories:
-        sim_df = sim_df[sim_df["Category"].isin(selected_categories)]
-
-    if sim_df.empty:
-        st.warning("No data matches the selected filters. Try adjusting them.")
-        return
-
-    # Run the simulation.
-    try:
-        result = simulate_scenario(
-            sim_df,
-            price_change_pct=price_change,
-            volume_change_pct=volume_change,
-            cost_change_pct=cost_change,
-        )
-    except ValueError as exc:
-        st.error(str(exc))
-        return
-
-    # Current vs Scenario KPI cards.
-    st.write("### Current vs Scenario")
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric(
-            "Revenue",
-            f"${result['scenario_revenue']:,.2f}",
-            delta=f"${result['revenue_change']:,.2f}",
-        )
-    with m2:
-        st.metric(
-            "Profit",
-            f"${result['scenario_profit']:,.2f}",
-            delta=f"${result['profit_change']:,.2f}",
-        )
-    with m3:
-        st.metric(
-            "Margin",
-            f"{result['scenario_margin_pct']:.1f}%",
-            delta=f"{result['margin_change_points']:+.1f} pts",
-        )
-
-    # Grouped bar chart.
-    st.write("### Revenue, Cost, Profit Comparison")
-    current = {
-        "Revenue": result["current_revenue"],
-        "Cost": result["current_cost"],
-        "Profit": result["current_profit"],
-    }
-    scenario_vals = {
-        "Revenue": result["scenario_revenue"],
-        "Cost": result["scenario_cost"],
-        "Profit": result["scenario_profit"],
-    }
-    fig = scenario_bar_chart(current, scenario_vals)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Assumptions note.
-    st.info(
-        "Simple estimate. Assumes the volume slider already includes any "
-        "customer reaction to price changes. Cost scales with volume."
-    )
-
-    # Details expander.
-    with st.expander("View scenario details"):
-        st.write(f"**Current revenue:** ${result['current_revenue']:,.2f}")
-        st.write(f"**Current cost:** ${result['current_cost']:,.2f}")
-        st.write(f"**Current profit:** ${result['current_profit']:,.2f}")
-        st.write(f"**Current margin:** {result['current_margin_pct']:.1f}%")
-        st.write(f"**Scenario revenue:** ${result['scenario_revenue']:,.2f}")
-        st.write(f"**Scenario cost:** ${result['scenario_cost']:,.2f}")
-        st.write(f"**Scenario profit:** ${result['scenario_profit']:,.2f}")
-        st.write(f"**Scenario margin:** {result['scenario_margin_pct']:.1f}%")
-        st.write(
-            f"**Revenue change:** ${result['revenue_change']:,.2f} "
-            f"({result['revenue_change_pct']:+.1f}%)"
-        )
-        st.write(
-            f"**Profit change:** ${result['profit_change']:,.2f} "
-            f"({result['profit_change_pct']:+.1f}%)"
-        )
-        st.write(
-            f"**Margin change:** {result['margin_change_points']:+.1f} pts "
-            f"({result['margin_change_pct']:+.1f}%)"
-        )
+        # Details expander.
+        with st.expander("View scenario details"):
+            st.markdown(f"**Current revenue:** ${result['current_revenue']:,.2f}")
+            st.markdown(f"**Current cost:** ${result['current_cost']:,.2f}")
+            st.markdown(f"**Current profit:** ${result['current_profit']:,.2f}")
+            st.markdown(f"**Current margin:** {result['current_margin_pct']:.1f}%")
+            st.markdown(f"**Scenario revenue:** ${result['scenario_revenue']:,.2f}")
+            st.markdown(f"**Scenario cost:** ${result['scenario_cost']:,.2f}")
+            st.markdown(f"**Scenario profit:** ${result['scenario_profit']:,.2f}")
+            st.markdown(f"**Scenario margin:** {result['scenario_margin_pct']:.1f}%")
+            st.markdown(
+                f"**Revenue change:** ${result['revenue_change']:,.2f} "
+                f"({result['revenue_change_pct']:+.1f}%)"
+            )
+            st.markdown(
+                f"**Profit change:** ${result['profit_change']:,.2f} "
+                f"({result['profit_change_pct']:+.1f}%)"
+            )
+            st.markdown(
+                f"**Margin change:** {result['margin_change_points']:+.1f} pts "
+                f"({result['margin_change_pct']:+.1f}%)"
+            )
 
 
 def render_guard_page(page_name: str) -> None:
-    """Render a 'please upload data first' warning for non-upload pages.
+    """Render a 'please upload data first' state for non-upload pages.
 
     Args:
         page_name: The name of the current page.
     """
-    st.subheader(page_name)
-    if "df" not in st.session_state:
-        st.warning("Please upload data first.")
-    else:
-        st.info(
-            "Data is loaded and cleaned. Analytics for this page are "
-            "coming in a later phase."
-        )
+    render_header()
+    render_empty_state(
+        "No data yet",
+        "Upload your sales data on the Upload Data page to get started.",
+    )
 
 
 def main() -> None:
     """Run the InsightOS application."""
     set_page_config()
+    render_css()
     if "current_page" not in st.session_state:
         st.session_state.current_page = "Upload Data"
-
-    render_header()
 
     current_page = render_sidebar()
 

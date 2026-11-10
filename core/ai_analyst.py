@@ -20,8 +20,11 @@ DEFAULT_PROVIDER = "openrouter"
 DEFAULT_MODEL = "openrouter/free"
 
 # Speed settings.
-MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1500"))
+MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "3000"))
 TEMPERATURE = 0.2
+
+# Reasoning effort values to try (in order) for providers that support it.
+REASONING_EFFORTS = ["low", "minimal", "none"]
 
 
 def _fmt_change(change: float) -> str:
@@ -69,6 +72,48 @@ def _extract_reasoning_content(chunk) -> str | None:
 def _is_blank(text: str | None) -> bool:
     """Return True if the text is None or blank/whitespace-only."""
     return not text or not text.strip()
+
+
+def _strip_cut_off_note(text: str) -> str:
+    """Remove the "(answer was cut off, try again)" note from an answer.
+
+    This note is never sent back to the model as history.
+    """
+    suffix = " (answer was cut off, try again)"
+    if text and text.endswith(suffix):
+        return text[: -len(suffix)].strip()
+    return text
+
+
+def _build_history(history=None, max_turns: int = 4) -> list[dict]:
+    """Build a cleaned history list for the model.
+
+    Strips cut-off notes from assistant messages and keeps only the
+    last ``max_turns`` turns (each turn = one user + one assistant message).
+
+    Args:
+        history: Optional list of prior chat messages.
+        max_turns: Maximum number of turns to include.
+
+    Returns:
+        A list of message dicts ready to prepend with the system prompt.
+    """
+    if not history:
+        return []
+
+    # Keep only the last max_turns * 2 messages (user + assistant pairs).
+    trimmed = history[-max_turns * 2 :]
+
+    cleaned = []
+    for msg in trimmed:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "assistant":
+            content = _strip_cut_off_note(content)
+        if content:
+            cleaned.append({"role": role, "content": content})
+
+    return cleaned
 
 
 
@@ -393,13 +438,16 @@ def _build_messages(question: str, context: str, history=None) -> list[dict]:
         "'Recommendation:'."
     )
 
+    # Clean history: strip cut-off notes, keep last 4 turns.
+    clean_history = _build_history(history, max_turns=4)
+
     messages = [{"role": "system", "content": system_prompt}]
     messages.append(
         {"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {question}"}
     )
 
-    if history:
-        for msg in history[-6:]:
+    if clean_history:
+        for msg in clean_history:
             messages.insert(-1, msg)
 
     return messages
@@ -421,28 +469,27 @@ def _call_provider(
         (answer_text, finish_reason, is_cut_off) tuple. The answer text
         has reasoning blocks stripped.
     """
-    extra_body = {}
-    if provider == "gemini":
-        extra_body["reasoning_effort"] = "low"
+    efforts = REASONING_EFFORTS if provider == "gemini" else [None]
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-            extra_body=extra_body if extra_body else None,
-        )
-    except Exception as exc:  # noqa: BLE001 - retry without reasoning_effort
-        if provider == "gemini" and "reasoning_effort" in str(exc).lower():
+    last_exc = None
+    for effort in efforts:
+        extra_body = {"reasoning_effort": effort} if effort else None
+        try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
+                extra_body=extra_body,
             )
-        else:
-            raise
+            break
+        except Exception as exc:  # noqa: BLE001 - try next effort value
+            last_exc = exc
+            if provider != "gemini" or "reasoning_effort" not in str(exc).lower():
+                raise
+    else:
+        # All effort values failed; re-raise the last exception.
+        raise last_exc
 
     choice = response.choices[0]
     content = choice.message.content or ""
@@ -468,30 +515,28 @@ def _call_provider_stream(
         (full_text, finish_reason, is_cut_off) tuple. Reasoning blocks
         and reasoning_content are stripped from the output.
     """
-    extra_body = {}
-    if provider == "gemini":
-        extra_body["reasoning_effort"] = "low"
+    efforts = REASONING_EFFORTS if provider == "gemini" else [None]
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-            stream=True,
-            extra_body=extra_body if extra_body else None,
-        )
-    except Exception as exc:  # noqa: BLE001 - retry without reasoning_effort
-        if provider == "gemini" and "reasoning_effort" in str(exc).lower():
+    last_exc = None
+    for effort in efforts:
+        extra_body = {"reasoning_effort": effort} if effort else None
+        try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
                 stream=True,
+                extra_body=extra_body,
             )
-        else:
-            raise
+            break
+        except Exception as exc:  # noqa: BLE001 - try next effort value
+            last_exc = exc
+            if provider != "gemini" or "reasoning_effort" not in str(exc).lower():
+                raise
+    else:
+        # All effort values failed; re-raise the last exception.
+        raise last_exc
 
     full_text = ""
     finish_reason = "stop"
@@ -513,10 +558,14 @@ def _call_provider_stream(
 def _try_providers(question: str, context: str, history=None) -> tuple[str, str]:
     """Try the primary provider, then fall back to the other on failure.
 
+    Each provider is tried once. If the first attempt returns an empty
+    or cut-off answer, the same provider is retried once before moving
+    to the secondary provider.
+
     Args:
         question: The user's question.
         context: Factual summary string.
-        history: Optional prior chat messages.
+        history: Optional list of prior chat messages.
 
     Returns:
         (answer, provider_name) tuple. If both providers fail, returns
@@ -528,39 +577,51 @@ def _try_providers(question: str, context: str, history=None) -> tuple[str, str]
     messages = _build_messages(question, context, history)
 
     def _finalize(answer: str, is_cut_off: bool, provider_name: str) -> str:
-        if is_cut_off:
-            answer = answer + " (answer was cut off, try again)"
+        # Never append cut-off notes to the answer sent to the user.
         return answer
 
-    # Try primary provider.
-    client, model = _get_client_and_model(primary)
-    if client is not None:
+    def _try_once(client, model, prov: str) -> tuple[str, str, bool, str | None]:
+        """Single attempt. Returns (answer, finish_reason, is_cut_off, error)."""
         try:
             answer, finish_reason, is_cut_off = _call_provider(
-                client, model, messages, primary
+                client, model, messages, prov
             )
             if _is_blank(answer):
-                raise ValueError("empty answer from provider")
-            return _finalize(answer, is_cut_off, primary), primary
-        except Exception as exc:  # noqa: BLE001 - fall through to secondary
-            primary_error = _friendly_error(exc, primary)
+                return "", finish_reason, True, "empty answer from provider"
+            return answer, finish_reason, is_cut_off, None
+        except Exception as exc:  # noqa: BLE001 - fall through to retry/fallback
+            return "", "error", True, _friendly_error(exc, prov)
+
+    # Try primary provider (up to 2 attempts).
+    client, model = _get_client_and_model(primary)
+    if client is not None:
+        answer, finish_reason, is_cut_off, err = _try_once(client, model, primary)
+        if err is None:
+            return answer, primary
+        primary_error = err
     else:
+        answer, finish_reason, is_cut_off = "", "stop", True
         primary_error = (
             f"{primary} is not configured. Please set its API key in .env."
         )
 
+    # Retry primary once if the first attempt returned empty/cut-off.
+    if _is_blank(answer) and client is not None:
+        answer, finish_reason, is_cut_off, err = _try_once(client, model, primary)
+        if err is None:
+            return answer, primary
+        primary_error = err or primary_error
+
     # Try secondary provider if its key exists.
     client2, model2 = _get_client_and_model(secondary)
     if client2 is not None:
-        try:
-            answer, finish_reason, is_cut_off = _call_provider(
-                client2, model2, messages, secondary
-            )
-            if _is_blank(answer):
-                raise ValueError("empty answer from provider")
-            return _finalize(answer, is_cut_off, secondary), secondary
-        except Exception as exc:  # noqa: BLE001 - return friendly error
-            return _friendly_error(exc, secondary), secondary
+        answer2, finish_reason2, is_cut_off2, err2 = _try_once(
+            client2, model2, secondary
+        )
+        if err2 is None:
+            return answer2, secondary
+        # Both providers failed; return the most informative error.
+        return primary_error or err2, primary
 
     # Neither provider worked.
     return primary_error, primary
@@ -569,10 +630,14 @@ def _try_providers(question: str, context: str, history=None) -> tuple[str, str]
 def _try_providers_stream(question: str, context: str, history=None):
     """Stream from the primary provider, falling back to secondary.
 
+    Each provider is tried once; if the first attempt returns an empty
+    or cut-off answer, the same provider is retried once before moving
+    on.
+
     Args:
         question: The user's question.
         context: Factual summary string.
-        history: Optional prior chat messages.
+        history: Optional list of prior chat messages.
 
     Yields:
         Text chunks as they arrive. If the final answer is blank or both
@@ -581,12 +646,14 @@ def _try_providers_stream(question: str, context: str, history=None):
     primary = _get_provider()
     secondary = _other_provider(primary)
 
-    messages = _build_messages(question, context, history)
+    # Build history: strip cut-off notes, keep last 4 turns.
+    clean_history = _build_history(history, max_turns=4)
+    messages = _build_messages(question, context, clean_history)
 
     def _is_blank(text: str) -> bool:
         return not text or not text.strip()
 
-    # Try primary provider.
+    # Try primary provider (up to 2 attempts).
     client, model = _get_client_and_model(primary)
     full_text = ""
     finish_reason = "stop"
@@ -598,13 +665,24 @@ def _try_providers_stream(question: str, context: str, history=None):
             full_text, finish_reason, _ = _call_provider_stream(
                 client, model, messages, primary
             )
-        except Exception as exc:  # noqa: BLE001 - fall through to secondary
+        except Exception as exc:  # noqa: BLE001 - fall through to retry
             provider_error = _friendly_error(exc, primary)
             full_text = ""
     else:
         provider_error = (
             f"{primary} is not configured. Please set its API key in .env."
         )
+
+    # Retry primary once if the first attempt returned blank.
+    if _is_blank(full_text) and client is not None:
+        try:
+            full_text, finish_reason, _ = _call_provider_stream(
+                client, model, messages, primary
+            )
+            provider_error = None
+        except Exception as exc:  # noqa: BLE001 - fall through to secondary
+            provider_error = _friendly_error(exc, primary)
+            full_text = ""
 
     # If primary failed or returned blank, try secondary.
     if _is_blank(full_text) and provider_error is not None:
@@ -639,10 +717,6 @@ def _try_providers_stream(question: str, context: str, history=None):
                 f"{model_name})."
             )
         return
-
-    is_cut_off = finish_reason == "length"
-    if is_cut_off:
-        full_text = full_text + " (answer was cut off, try again)"
 
     # Yield the answer in small chunks so it appears to stream.
     for i in range(0, len(full_text), 40):

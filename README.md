@@ -162,7 +162,7 @@ required columns.
 
 ## Running tests
 
-50 automated tests. Run with:
+62 automated tests. Run with:
 
 ```bash
 pytest tests/test_kpi.py

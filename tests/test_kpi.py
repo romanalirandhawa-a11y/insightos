@@ -4,6 +4,7 @@ Uses a tiny hand-made DataFrame where every expected answer can be
 verified by hand. Run with: pytest tests/test_kpi.py
 """
 
+import os
 import pandas as pd
 
 from core.ai_analyst import build_context, compute_rankings, _fmt_change
@@ -1118,4 +1119,438 @@ def test_ai_is_configured_empty_keys():
         assert ai_is_configured() is False
     finally:
         _restore_env(saved)
+
+
+# ---- Chart function tests ----
+
+
+def _make_trend_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Month": ["2026-01", "2026-02", "2026-03"],
+        "Sales": [1000.0, 1100.0, 1200.0],
+        "Profit": [200.0, 250.0, 300.0],
+        "Orders": [10, 11, 12],
+    })
+
+
+def _make_products_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Product": ["A", "B", "C"],
+        "Sales": [500.0, 300.0, 200.0],
+        "Profit": [100.0, 90.0, 50.0],
+        "Quantity": [10, 5, 4],
+        "Margin %": [20.0, 30.0, 25.0],
+    })
+
+
+def _make_region_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Region": ["North", "South", "East"],
+        "Sales": [500.0, 300.0, 200.0],
+        "Profit": [100.0, 90.0, 50.0],
+        "Margin %": [20.0, 30.0, 25.0],
+        "Orders": [10, 5, 4],
+        "Revenue Share %": [50.0, 30.0, 20.0],
+    })
+
+
+def _make_category_df() -> pd.DataFrame:
+    return pd.DataFrame({
+        "Category": ["Electronics", "Clothing", "Home"],
+        "Sales": [500.0, 300.0, 200.0],
+        "Profit": [100.0, 90.0, 50.0],
+        "Margin %": [20.0, 30.0, 25.0],
+        "Orders": [10, 5, 4],
+        "Revenue Share %": [50.0, 30.0, 20.0],
+    })
+
+
+def test_revenue_profit_trend_chart_returns_figure():
+    from core.kpi import monthly_trend
+    from ui.charts import revenue_profit_trend_chart
+    df = _make_trend_df()
+    trend = monthly_trend(df)
+    fig = revenue_profit_trend_chart(trend)
+    from plotly.graph_objects import Figure
+    assert isinstance(fig, Figure)
+
+
+def test_top_products_chart_returns_figure():
+    from core.kpi import top_products
+    from ui.charts import top_products_chart
+    df = _make_products_df()
+    products = top_products(df)
+    fig = top_products_chart(products)
+    from plotly.graph_objects import Figure
+    assert isinstance(fig, Figure)
+
+
+def test_regional_chart_returns_figure():
+    from core.kpi import regional_performance
+    from ui.charts import regional_chart
+    df = _make_region_df()
+    regions = regional_performance(df)
+    fig = regional_chart(regions)
+    from plotly.graph_objects import Figure
+    assert isinstance(fig, Figure)
+
+
+def test_category_donut_chart_returns_figure():
+    from core.kpi import category_performance
+    from ui.charts import category_donut_chart
+    df = _make_category_df()
+    cats = category_performance(df)
+    fig = category_donut_chart(cats)
+    from plotly.graph_objects import Figure
+    assert isinstance(fig, Figure)
+
+
+def test_scenario_bar_chart_returns_figure():
+    from ui.charts import scenario_bar_chart
+    current = {"Revenue": 1000.0, "Cost": 600.0, "Profit": 400.0}
+    scenario = {"Revenue": 1100.0, "Cost": 660.0, "Profit": 440.0}
+    fig = scenario_bar_chart(current, scenario)
+    from plotly.graph_objects import Figure
+    assert isinstance(fig, Figure)
+
+
+# ---- AI Analyst page rendering test (AppTest) ----
+
+
+def test_ai_analyst_page_renders_with_data():
+    """AppTest: AI Analyst page renders without exception when data is loaded.
+
+    Asserts that either a chat input or a demo-disabled info box is present,
+    and that no exception occurs during rendering.
+    """
+    from streamlit.testing.v1 import AppTest
+    from core.loader import load_sample_data
+    from core.cleaner import clean_data
+
+    df_raw = load_sample_data()
+    df_clean, _ = clean_data(df_raw)
+
+    at = AppTest.from_file("../app.py")
+    at.session_state["df_clean"] = df_clean
+    at.session_state["current_page"] = "AI Analyst"
+
+    at.run(timeout=60)
+
+    # AppTest.exception returns an ElementList; empty means no exceptions
+    assert len(at.exception) == 0, f"AppTest exceptions: {at.exception}"
+
+    # Either chat input (configured) or info box (not configured) should be present
+    has_chat_input = len(at.chat_input) >= 1
+    has_info_box = len(at.info) >= 1
+    assert has_chat_input or has_info_box, (
+        "AI Analyst page rendered neither chat input nor info box"
+    )
+
+
+# ---- AI Analyst fake-client tests (no real API calls) ----
+
+
+class _FakeDelta:
+    def __init__(self, content: str = ""):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content: str = "", finish_reason: str | None = None):
+        self.delta = _FakeDelta(content)
+        self.finish_reason = finish_reason
+
+
+class _FakeChunk:
+    def __init__(self, content: str = "", finish_reason: str | None = None):
+        self.choices = [_FakeChoice(content, finish_reason)]
+
+
+class _FakeMessage:
+    def __init__(self, content: str = ""):
+        self.content = content
+
+
+class _FakeResponseChoice:
+    def __init__(self, content: str = "", finish_reason: str | None = None):
+        self.message = _FakeMessage(content)
+        self.finish_reason = finish_reason
+
+
+class _FakeResponse:
+    def __init__(self, content: str = "", finish_reason: str | None = None):
+        self.choices = [_FakeResponseChoice(content, finish_reason)]
+
+
+class _FakeStream:
+    """Fake stream that yields chunks then stops."""
+
+    def __init__(self, chunks: list[tuple[str, str | None]]):
+        self._chunks = chunks
+        self._index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._index >= len(self._chunks):
+            raise StopIteration
+        content, finish_reason = self._chunks[self._index]
+        self._index += 1
+        return _FakeChunk(content, finish_reason)
+
+
+class _FakeClient:
+    """Fake OpenAI client for testing without real API calls."""
+
+    def __init__(self, chunks: list[tuple[str, str | None]], should_fail: bool = False):
+        self._chunks = chunks
+        self._should_fail = should_fail
+        self.call_count = 0
+        self._chunk_index = 0
+
+    class _Completions:
+        def __init__(self, parent):
+            self._parent = parent
+
+        def create(self, **kwargs):
+            self._parent.call_count += 1
+            if self._parent._should_fail:
+                raise Exception("401 Unauthorized")
+            stream = kwargs.get("stream", False)
+            if stream:
+                return _FakeStream(list(self._parent._chunks))
+            # Non-streaming: use first chunk as full response
+            if self._parent._chunk_index >= len(self._parent._chunks):
+                return _FakeResponse("", "stop")
+            content, finish_reason = self._parent._chunks[self._parent._chunk_index]
+            self._parent._chunk_index += 1
+            return _FakeResponse(content, finish_reason)
+
+    def __init__(self, chunks, should_fail=False):
+        self._chunks = list(chunks)
+        self._should_fail = should_fail
+        self.call_count = 0
+        self._chunk_index = 0
+        self.chat = type("chat", (), {})()
+        self.chat.completions = self._Completions(self)
+
+
+def _monkeypatch_client(chunks, should_fail=False):
+    """Monkeypatch _get_client_and_model to return a fake client."""
+    import core.ai_analyst as ai_mod
+
+    client = _FakeClient(chunks, should_fail)
+
+    def fake_get_client_and_model(provider):
+        return client, "test-model"
+
+    orig = ai_mod._get_client_and_model
+    ai_mod._get_client_and_model = fake_get_client_and_model
+    return ai_mod, orig, client
+
+
+def test_history_strips_cut_off_note():
+    """Cut-off notes in assistant history are stripped before sending to model."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+
+        ai_mod, orig, client = _monkeypatch_client(
+            [("The answer is 42 (answer was cut off, try again)", "stop")]
+        )
+        try:
+            # Build messages with history containing a cut-off note
+            history = [
+                {"role": "user", "content": "CONTEXT:\nsome context\n\nQUESTION: old q"},
+                {"role": "assistant", "content": "old answer (answer was cut off, try again)"},
+            ]
+            messages = ai_mod._build_messages("new question", "ctx", history)
+
+            # The cut-off note should be stripped from the assistant message
+            assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+            assert len(assistant_msgs) == 1
+            assert "(answer was cut off, try again)" not in assistant_msgs[0]["content"]
+            assert assistant_msgs[0]["content"] == "old answer"
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+def test_history_keeps_only_last_4_turns():
+    """Only the last 4 turns are sent to the model."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+
+        ai_mod, orig, _ = _monkeypatch_client([("answer", "stop")])
+        try:
+            # 6 turns = 12 messages (6 user + 6 assistant). Only last 4 turns = 8 messages.
+            history = []
+            for i in range(6):
+                history.append({"role": "user", "content": f"user {i}"})
+                history.append({"role": "assistant", "content": f"assistant {i}"})
+            messages = ai_mod._build_messages("new question", "ctx", history)
+
+            # system + context/user + last 8 history messages
+            user_msgs = [m for m in messages if m["role"] == "user"]
+            # Last 4 turns = 4 user messages (from turns 2,3,4,5) + the new question = 5
+            assert len(user_msgs) == 5, f"Expected 5 user messages, got {len(user_msgs)}"
+            assert user_msgs[-1]["content"].startswith("CONTEXT:")
+            assert user_msgs[0]["content"] == "user 2"
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+def test_question_not_duplicated_in_history():
+    """The current question appears only once in messages sent to model."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+
+        ai_mod, orig, _ = _monkeypatch_client([("answer", "stop")])
+        try:
+            history = [
+                {"role": "user", "content": "CONTEXT:\nctx\n\nQUESTION: old q"},
+                {"role": "assistant", "content": "old answer"},
+            ]
+            messages = ai_mod._build_messages("What is revenue?", "ctx", history)
+
+            # Count occurrences of the question text
+            question_text = "What is revenue?"
+            count = sum(1 for m in messages if question_text in m.get("content", ""))
+            assert count == 1, f"Question appears {count} times, expected 1"
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+def test_retry_on_empty_answer_then_success():
+    """Primary provider retried once on empty answer, then succeeds."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+
+        # First call returns empty, second returns answer
+        client = _FakeClient([("", "stop"), ("The answer is 42", "stop")])
+
+        def fake_get_client_and_model(provider):
+            return client, "test-model"
+
+        orig = ai_mod._get_client_and_model
+        ai_mod._get_client_and_model = fake_get_client_and_model
+        try:
+            answer, prov = ai_mod._try_providers("test question", "ctx", None)
+            assert answer == "The answer is 42"
+            assert client.call_count == 2  # Called twice (retry)
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+def test_retry_on_empty_then_secondary():
+    """Primary returns empty twice, secondary succeeds."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+        os.environ["GEMINI_API_KEY"] = "fake-gemini-key"
+        os.environ["GEMINI_MODEL"] = "gemini-1.5-flash"
+
+        # Primary returns empty twice
+        primary_client = _FakeClient([("", "stop"), ("", "stop")])
+        # Secondary succeeds
+        secondary_client = _FakeClient([("Secondary answer", "stop")])
+
+        call_order = []
+
+        def fake_get_client_and_model(provider):
+            call_order.append(provider)
+            if provider == "openrouter":
+                return primary_client, "openrouter/free"
+            return secondary_client, "gemini-1.5-flash"
+
+        orig = ai_mod._get_client_and_model
+        ai_mod._get_client_and_model = fake_get_client_and_model
+        try:
+            answer, prov = ai_mod._try_providers("test question", "ctx", None)
+            assert answer == "Secondary answer"
+            assert prov == "gemini"
+            assert primary_client.call_count == 2  # Primary tried twice
+            assert secondary_client.call_count == 1  # Secondary tried once
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+def test_cut_off_note_not_appended_to_answer():
+    """Cut-off note is NOT appended to the final answer text."""
+    import core.ai_analyst as ai_mod
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ["AI_PROVIDER"] = "openrouter"
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test123"
+        os.environ["OPENROUTER_MODEL"] = "openrouter/free"
+
+        # finish_reason == "length" but answer text doesn't get cut-off note appended
+        client = _FakeClient([("The answer is complete", "length")])
+
+        def fake_get_client_and_model(provider):
+            return client, "test-model"
+
+        orig = ai_mod._get_client_and_model
+        ai_mod._get_client_and_model = fake_get_client_and_model
+        try:
+            answer, prov = ai_mod._try_providers("test question", "ctx", None)
+            assert answer == "The answer is complete"
+            assert "(answer was cut off, try again)" not in answer
+        finally:
+            ai_mod._get_client_and_model = orig
+            os.environ.clear()
+            os.environ.update(saved_env)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+
 
